@@ -8,20 +8,28 @@ import {
   accountExternalId,
   interRequestDelayMs,
   isStackXUrl,
-  probeWindow,
+  livePullExitCode,
+  livePullSummary,
   publicProbeView,
   readXiaomiCredentials,
   runLiveProbe,
-  type ProbeResponse,
   type ProbeTransport,
 } from "./pull/live-probe.js";
-import { clientSign, sealJson, sealParams, unsealData } from "./pull/xiaomi-crypto.js";
+import {
+  STACK_FIXTURE_PASS,
+  STACK_FIXTURE_SERVICE,
+  STACK_FIXTURE_SSECURITY,
+  scriptedStackTransport as scriptedTransport,
+  stackLoginResponse as loginResponse,
+  stackPage as page,
+} from "./pull/scripted-stack.js";
+import { clientSign, sealParams, unsealData } from "./pull/xiaomi-crypto.js";
 import { formatInShanghai, shanghaiDayStart } from "./time.js";
 import { validateEnvelope, validateRecord } from "./ingest/validate.js";
 
-const PASS = "fixture-only-pass-value";
-const SERVICE = "svc-fixture-value";
-const SSECURITY = Buffer.from("0123456789abcdef").toString("base64");
+const PASS = STACK_FIXTURE_PASS;
+const SERVICE = STACK_FIXTURE_SERVICE;
+const SSECURITY = STACK_FIXTURE_SSECURITY;
 const NOW = new Date("2026-10-28T06:30:00+08:00");
 
 test("Shanghai midnight formats with +08:00", () => {
@@ -153,6 +161,8 @@ test("live probe skips when credentials are absent and does not call the network
   assert.equal(called, false);
   assert.equal(readXiaomiCredentials({}), null);
   assert.equal(publicProbeView(result).skipped, true);
+  assert.equal(livePullExitCode(result), 1);
+  assert.equal(livePullSummary(result).error_code, "credentials_absent");
 });
 
 test("live probe pulls a short window, spaces calls, and hides credentials", async () => {
@@ -219,6 +229,7 @@ test("live probe pulls a short window, spaces calls, and hides credentials", asy
   assert.equal(daily.steps, 100);
   assert.equal(result.vendor_sid, accountExternalId("10001"));
   assert.equal(JSON.stringify(publicProbeView(result)).includes(PASS), false);
+  assert.equal(livePullExitCode(result), 0);
 });
 
 test("live probe renews once on 401 and then stops", async () => {
@@ -250,6 +261,8 @@ test("live probe renews once on 401 and then stops", async () => {
   assert.equal(result.records.length, 0);
   assert.equal(logins, 2);
   assert.equal(health, 2);
+  assert.equal(livePullExitCode(result), 1);
+  assert.equal(livePullSummary(result).error_code, "auth_expired");
 });
 
 test("live probe maps passToken refusal and does not follow a non-stack-X location", async () => {
@@ -345,52 +358,19 @@ test("live probe classifies upstream failures", async () => {
   }
 });
 
-type HealthHandler = (url: string, params: Record<string, unknown>) => ProbeResponse | HealthOverride;
-
-type HealthOverride = ProbeResponse & { plain?: unknown };
-
-function loginResponse(code = 0, location = "https://sts-hlth.io.mi.com/healthapp/sts?sid=miothealth"): ProbeResponse {
-  return {
-    status: 200,
-    headers: {},
-    body:
-      "&&&START&&&" +
-      JSON.stringify({
-        code,
-        nonce: "nonce-fixture",
-        ssecurity: SSECURITY,
-        location,
-        cUserId: "c-fixture",
-        securityStatus: 0,
-      }),
-  };
-}
-
-function page(rows: unknown[]): HealthOverride {
-  return {
-    status: 200,
-    headers: {},
-    body: "",
-    plain: { code: 0, result: { data_list: rows, sport_records: rows, has_more: false } },
-  };
-}
-
-function scriptedTransport(handlers: { onLogin?: () => ProbeResponse; onHealth?: HealthHandler }): ProbeTransport {
-  return async (request) => {
-    const url = new URL(request.url);
-    if (url.host === "account.xiaomi.com") return (handlers.onLogin ?? (() => loginResponse()))();
-    if (url.host === "sts-hlth.io.mi.com") {
-      return { status: 200, headers: { "set-cookie": [`serviceToken=${SERVICE}; Path=/`] }, body: "ok" };
-    }
-    if (url.host !== "hlth.io.mi.com") throw new Error(`blocked host ${url.host}`);
-    const nonce = url.searchParams.get("_nonce");
-    const data = url.searchParams.get("data");
-    if (!nonce || !data) throw new Error("health request was not sealed");
-    const params = unsealData(SSECURITY, nonce, data) as Record<string, unknown>;
-    const produced = (handlers.onHealth ?? (() => page([])))(request.url, params);
-    if ("plain" in produced && produced.plain !== undefined) {
-      return { status: produced.status, headers: produced.headers, body: sealJson(SSECURITY, nonce, produced.plain) };
-    }
-    return produced;
-  };
-}
+test("daily workflow names Actions secrets and does not load fixtures", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/daily-live-pull.yml", import.meta.url), "utf8");
+  const cli = readFileSync(new URL("./cli/pull-probe.ts", import.meta.url), "utf8");
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /cron:\s*"30 22 \* \* \*"/);
+  assert.match(workflow, /npm run pull:live/);
+  assert.equal(workflow.includes("pull:mock"), false);
+  assert.equal(workflow.includes("fixtures/"), false);
+  assert.equal(workflow.includes("postgres://"), false);
+  for (const name of ["DATABASE_URL", "XIAOMI_USER_ID", "XIAOMI_PASS_TOKEN", "XIAOMI_DEVICE_ID"]) {
+    assert.match(workflow, new RegExp(`secrets\\.${name}`));
+  }
+  assert.equal(cli.includes("runMockPull"), false);
+  assert.equal(cli.includes("fixtures/mi_health"), false);
+  assert.match(cli, /credentials_absent/);
+});

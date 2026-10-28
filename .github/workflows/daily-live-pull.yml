@@ -1,0 +1,42 @@
+# Daily stack X pull. Schedule is 06:30 Asia/Shanghai (22:30 UTC). No DST in that zone.
+# The job runs pull then ingest. A failure stops the job.
+name: daily-live-pull
+
+on:
+  schedule:
+    - cron: "30 22 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marco-health-daily-live-pull
+  cancel-in-progress: false
+
+jobs:
+  pull-and-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Pull Shanghai today and ingest
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          XIAOMI_USER_ID: ${{ secrets.XIAOMI_USER_ID }}
+          XIAOMI_PASS_TOKEN: ${{ secrets.XIAOMI_PASS_TOKEN }}
+          XIAOMI_DEVICE_ID: ${{ secrets.XIAOMI_DEVICE_ID }}
+        run: npm run pull:live

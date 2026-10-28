@@ -142,9 +142,11 @@ export function fetchTransport(timeoutMs = 15_000): ProbeTransport {
 }
 
 /**
- * Short stack X probe. Missing credentials skip with no network.
+ * Short stack X probe. Missing credentials return credentials_absent and do not call the network.
+ * The daily CLI treats that result as a failure. It is not a successful skip.
  * A 401 on the health host renews the STS session once, then stops as auth_expired.
- * passToken is sent only to account.xiaomi.com. Data calls stay on hlth.io.mi.com.
+ * Requests wait 1-2s with jitter. passToken is sent only to account.xiaomi.com.
+ * Data calls stay on hlth.io.mi.com.
  */
 export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbeResult> {
   const credentials = readXiaomiCredentials(options.env);
@@ -405,6 +407,19 @@ export function publicProbeView(result: LiveProbeResult): Record<string, unknown
     sync_run_id: result.sync_run_id,
     record_count: result.records.length,
   };
+}
+
+/** Exit status for pull:live. Absent credentials and failed pulls are both failures. */
+export function livePullExitCode(result: LiveProbeResult): number {
+  if (result.skipped) return 1;
+  return result.status === "failed" ? 1 : 0;
+}
+
+/** Stdout summary. Adds error_code credentials_absent when the process must fail closed. */
+export function livePullSummary(result: LiveProbeResult): Record<string, unknown> {
+  const view = publicProbeView(result);
+  if (result.skipped) return { ...view, error_code: "credentials_absent" };
+  return view;
 }
 
 function healthCookie(session: Session): string {
