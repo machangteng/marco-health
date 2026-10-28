@@ -60,7 +60,7 @@ npm run build
 npm start
 ```
 
-`PORT` defaults to `3000`. Export `PORT` in the shell when you need another port.
+`PORT` defaults to `3000`. Export `PORT` in the shell when you need another port. `npm start` reads `PORT` when a host sets it. See [Deploy](#deploy).
 
 ## Read API
 
@@ -224,3 +224,40 @@ npm run migrate
 npm test
 npm run typecheck
 ```
+
+## Deploy
+
+Render serves the phone UI over HTTPS. The service is the existing process: `npm start` serves `web/`, the read API, and `GET /health`. It reads Neon through `DATABASE_URL`. When that Shanghai day has `daily_aggregates` rows, `GET /v1/read/today` returns `source` `"db"`.
+
+### Why Render
+
+`render.yaml` selects Render's free web service (`plan: free`, 0.1 CPU, 512 MB). The URL is `https://….onrender.com` with managed TLS. The build is the repo `Dockerfile`: Node 20, `npm run build`, then `npm start` (`node dist/index.js`). Render sets `PORT`. The process binds `0.0.0.0` and listens on that value. The startup log still prints `http://127.0.0.1:<port>`; Render reaches the process on `PORT`.
+
+Render is the free host that runs this Node process. Railway's ongoing free credit is $1 per month, which does not keep a service online. Fly.io has no free tier for new accounts (the smallest always-on machine is about $2 per month) and deploys through `flyctl`. A Render free instance sleeps after about 15 minutes without a request and takes about a minute to wake on the next open.
+
+The public host is the UI and the read API. Its only secret is `DATABASE_URL`. Leave `XIAOMI_USER_ID`, `XIAOMI_PASS_TOKEN`, and `XIAOMI_DEVICE_ID` on GitHub Actions. `serviceToken` and `ssecurity` stay runtime fields of the puller.
+
+### Ship from main
+
+Merge this config to `main`, then in the Render Dashboard choose **New → Blueprint** and select this GitHub repository. Render reads `render.yaml`. The service tracks branch `main` and redeploys when that branch moves.
+
+`region` is `singapore`, the closest Render region to Asia/Shanghai. Region cannot be changed after the service exists. Before the first apply, edit `region` in `render.yaml` to `oregon`, `ohio`, `virginia`, or `frankfurt` if the Neon project should sit next to a different Render region.
+
+### The one secret
+
+When Render prompts for `DATABASE_URL`, paste the Neon connection URI once. Use the same value as the Actions secret: Neon **Connect**, pooling off, direct host with no `-pooler` suffix. The URI stays in Render's environment UI. Do not commit it, and do not put it in `render.yaml`.
+
+The daily workflow applies `db/migrations/` before the live pull. This service does not run `npm run migrate` and does not pull. If `/health` reports `schemaReady: false`, run that workflow, or run `npm run migrate` against the same URI from a machine you control.
+
+### Smoke
+
+Use the URL Render shows after the blueprint finishes.
+
+```bash
+curl -fsS "https://<host>/health"
+curl -fsS "https://<host>/v1/read/today"
+```
+
+`/health` returns JSON. Status `200` and `schemaReady: true` means Neon accepted a query and the locked relations are present. `/v1/read/today` returns JSON. `source` is `"db"` when the Shanghai day has `daily_aggregates` rows, and `"fixture"` when it does not. Open `https://<host>/` on a phone. The UI (今日 / 趋势 / 我的) loads.
+
+A free instance that has been asleep, or a Neon compute that has suspended, can fail the first request. Send it again once both are awake. If the first deploy's health check fails for that reason, wake the Neon compute from its console and redeploy.
