@@ -5,7 +5,7 @@ import { after, before, describe, test } from "node:test";
 import type { Client, QueryResult } from "pg";
 import { connectWithRetry } from "./db.js";
 import { migrateToHead } from "./migrate.js";
-import { probeWindow } from "./pull/live-probe.js";
+import { PROBE_WINDOW_DAYS, probeWindow } from "./pull/live-probe.js";
 import { asQueryable, type Queryable } from "./query.js";
 import { readToday } from "./read/service.js";
 import { shanghaiDay } from "./time.js";
@@ -122,7 +122,8 @@ test("verified day is the pull window end in Asia/Shanghai", () => {
   const now = new Date("2026-10-28T22:30:00.000Z");
   assert.equal(shanghaiDay(now), "2026-10-29");
   const window = probeWindow(now);
-  assert.equal(window.from, "2026-10-28");
+  assert.equal(PROBE_WINDOW_DAYS, 7);
+  assert.equal(window.from, "2026-10-23");
   assert.equal(window.to, "2026-10-29");
 });
 

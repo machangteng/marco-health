@@ -6,14 +6,39 @@ import { formatInShanghai, shiftShanghaiDay, shanghaiDay } from "../time.js";
 import { normalizeDailyReports, normalizeHeartSamples, normalizeSleepSessions, normalizeWorkouts, type UpstreamRow } from "./normalize.js";
 import { clientSign, openJson, sealParams } from "./xiaomi-crypto.js";
 
-/** Inclusive Shanghai days covered by one probe. Not a historical backfill. */
-export const PROBE_WINDOW_DAYS = 2;
+/**
+ * Inclusive Asia/Shanghai calendar days in one live pull, ending today.
+ * Default and hard cap are 7 (was 2). Not a multi-week archive.
+ * `XIAOMI_PULL_WINDOW_DAYS` in the process environment can shrink the window.
+ * A value above 7 is clamped to 7.
+ */
+export const PROBE_WINDOW_DAYS = 7;
+export const MAX_PROBE_WINDOW_DAYS = 7;
 export const PROBE_DAILY_KEYS = ["steps", "calories", "intensity", "valid_stand", "heart_rate"] as const;
+
+/**
+ * Page caps for one 7-day pull. Hitting a cap while `has_more` is still true
+ * keeps the rows already fetched and marks the run `partial`.
+ * Heart-rate size is 1,000 × 12 = 12,000 points: eight days at one sample a
+ * minute (the 7-day window plus the one-day pad) is 11,520.
+ * Sport keeps the contract page size of 50.
+ */
+export const PROBE_PAGE_LIMITS = {
+  dailyMaxPages: 4,
+  heartLimit: 1000,
+  heartMaxPages: 12,
+  sleepLimit: 40,
+  sleepMaxPages: 2,
+  sportLimit: 50,
+  sportMaxPages: 3,
+} as const;
+
+/** HR and sleep queries start this far before the window. Samples before window start are dropped. */
+const HR_SLEEP_PAD_SEC = 86_400;
 const HEALTH_ORIGIN = "https://hlth.io.mi.com";
 const LOGIN_URL = "https://account.xiaomi.com/pass/serviceLogin?_json=true&sid=miothealth";
 const MIN_GAP_MS = 1000;
 const MAX_GAP_MS = 2000;
-const MAX_PAGES = 2;
 
 const PATH_OK: Record<string, (pathname: string) => boolean> = {
   "account.xiaomi.com": (pathname) => pathname === "/pass/serviceLogin",
@@ -145,12 +170,27 @@ export function accountExternalId(userId: string): string {
   return `acct_${digest}`;
 }
 
-export function probeWindow(now: Date): ProbeWindow & { startSec: number; endSec: number; hrStartSec: number } {
+/** Window length from `XIAOMI_PULL_WINDOW_DAYS`. Blank or invalid values use the default. */
+export function probeWindowDays(env: NodeJS.ProcessEnv): number {
+  const raw = env.XIAOMI_PULL_WINDOW_DAYS?.trim() ?? "";
+  if (!/^[1-9]\d*$/.test(raw)) return PROBE_WINDOW_DAYS;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed)) return PROBE_WINDOW_DAYS;
+  return Math.min(parsed, MAX_PROBE_WINDOW_DAYS);
+}
+
+export function probeWindow(now: Date, windowDays: number = PROBE_WINDOW_DAYS): ProbeWindow & { startSec: number; endSec: number; hrStartSec: number } {
+  const days = clampProbeWindowDays(windowDays);
   const to = shanghaiDay(now);
-  const from = shiftShanghaiDay(to, -(PROBE_WINDOW_DAYS - 1));
+  const from = shiftShanghaiDay(to, -(days - 1));
   const startSec = Math.floor(new Date(`${from}T00:00:00+08:00`).getTime() / 1000);
   const endSec = Math.floor(now.getTime() / 1000);
-  return { from, to, startSec, endSec, hrStartSec: startSec - 86_400 };
+  return { from, to, startSec, endSec, hrStartSec: startSec - HR_SLEEP_PAD_SEC };
+}
+
+function clampProbeWindowDays(windowDays: number): number {
+  if (!Number.isInteger(windowDays) || windowDays < 1) return PROBE_WINDOW_DAYS;
+  return Math.min(windowDays, MAX_PROBE_WINDOW_DAYS);
 }
 
 export function readXiaomiCredentials(env: NodeJS.ProcessEnv): { userId: string; passToken: string; deviceId: string } | null {
@@ -183,18 +223,21 @@ export function fetchTransport(timeoutMs = 15_000): ProbeTransport {
 }
 
 /**
- * Short stack X probe. Missing credentials return credentials_absent and do not call the network.
+ * Stack X pull for the past 7 Asia/Shanghai calendar days (inclusive, ending today).
+ * Missing credentials return credentials_absent and do not call the network.
  * The daily CLI treats that result as a failure. It is not a successful skip.
  * A 401 on the health host renews the STS session once, then stops as auth_expired.
  * serviceLogin and STS failures add safe diagnostic fields to the summary.
  * A login nonce is taken from the JSON body (string or integer) or, when that field is empty, from Extension-Pragma.
  * Requests wait 1-2s with jitter. passToken is sent only to account.xiaomi.com.
  * Data calls stay on hlth.io.mi.com.
+ * A list that still has has_more after its page cap is partial. Fetched rows are kept.
  */
 export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbeResult> {
   const credentials = readXiaomiCredentials(options.env);
   const now = options.now ?? (() => new Date());
-  const window = probeWindow(now());
+  const windowDays = probeWindowDays(options.env);
+  const window = probeWindow(now(), windowDays);
   if (!credentials) return { skipped: true, reason: "credentials_absent" };
 
   const secrets = [credentials.passToken, credentials.userId];
@@ -268,8 +311,8 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
         tag: "daily_report",
         start_time: window.startSec,
         end_time: window.endSec,
-        limit: PROBE_WINDOW_DAYS,
-      }, "data_list", call, () => {
+        limit: windowDays,
+      }, "data_list", PROBE_PAGE_LIMITS.dailyMaxPages, call, () => {
         truncated = true;
       });
       dailyRows.push(...page);
@@ -282,8 +325,8 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
         key: "heart_rate",
         start_time: window.hrStartSec,
         end_time: window.endSec,
-        limit: 200,
-      }, "data_list", call, () => {
+        limit: PROBE_PAGE_LIMITS.heartLimit,
+      }, "data_list", PROBE_PAGE_LIMITS.heartMaxPages, call, () => {
         truncated = true;
       });
     }
@@ -295,8 +338,8 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
         key: "sleep",
         start_time: window.hrStartSec,
         end_time: window.endSec,
-        limit: 20,
-      }, "data_list", call, () => {
+        limit: PROBE_PAGE_LIMITS.sleepLimit,
+      }, "data_list", PROBE_PAGE_LIMITS.sleepMaxPages, call, () => {
         truncated = true;
       });
     }
@@ -306,9 +349,9 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
       sportRows = await pagedGet(session, "/app/v1/data/get_sport_records_by_time", {
         start_time: window.startSec,
         end_time: window.endSec,
-        limit: 50,
+        limit: PROBE_PAGE_LIMITS.sportLimit,
         reverse: false,
-      }, "sport_records", call, () => {
+      }, "sport_records", PROBE_PAGE_LIMITS.sportMaxPages, call, () => {
         truncated = true;
       });
     }
@@ -376,12 +419,13 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
     path: string,
     params: Record<string, unknown>,
     listKey: "data_list" | "sport_records",
+    maxPages: number,
     request: typeof call,
     onTruncated: () => void,
   ): Promise<UpstreamRow[]> {
     const rows: UpstreamRow[] = [];
     let nextKey = "";
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    for (let page = 0; page < maxPages; page += 1) {
       const query = nextKey === "" ? params : { ...params, next_key: nextKey };
       const decoded = await signedGet(current, path, query, request);
       const list = decoded[listKey];

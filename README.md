@@ -155,9 +155,13 @@ src/verify/            Shanghai-day check after the live pull
 
 ## Daily live pull
 
-`npm run pull:live` reads runtime credentials, pulls the Asia/Shanghai today window from stack X, and upserts through the same path as `POST /v1/ingest/batch`. The window is that calendar day plus the previous day (the contract's one-day pad). Ring fields stay `active_kcal`, `exercise_minutes`, and `stand_hours`.
+`npm run pull:live` reads runtime credentials, pulls the past **7 Asia/Shanghai calendar days** (inclusive, ending today) from stack X, and upserts through the same path as `POST /v1/ingest/batch`. The window was 2 days (that calendar day plus the previous day). Heart-rate and sleep queries still start one calendar day before the window; samples before the window start are dropped. Ring fields stay `active_kcal`, `exercise_minutes`, and `stand_hours`.
+
+`XIAOMI_PULL_WINDOW_DAYS` overrides that width in the process environment. The default is 7. A value above 7 is clamped to 7, so the daily job does not become a multi-week archive. It is not a credential, it is not loaded from `.env`, and it is not set on Render.
 
 Requests wait 1–2 seconds with jitter. A health-host HTTP 401 refreshes the STS session once. A second 401 stops with `auth_expired` and does not retry. `passToken` code `70016` stops with `pass_token_invalid`.
+
+Each list stops at a fixed page cap. Daily keys use `limit` equal to the window length and at most 4 pages. Heart rate uses `limit` 1000 and at most 12 pages (12,000 points, about one sample a minute across the window plus the one-day pad). Sleep uses `limit` 40 and at most 2 pages. Sport keeps `limit` 50 and at most 3 pages. When `has_more` is still true at that cap, status is `partial`. Rows already fetched are still upserted. The puller does not keep paging.
 
 A failure inside `serviceLogin` or the STS call that follows it adds six fields to the JSON summary and to the Actions line `live pull failed: …`: `login_code`, `security_status`, `has_ssecurity`, `has_nonce`, `has_location`, and `has_service_token`. These are a code, a status, and booleans. The summary does not include `passToken`, `ssecurity`, `nonce`, the `location` URL, `serviceToken`, or cookies.
 
@@ -165,7 +169,7 @@ A failure inside `serviceLogin` or the STS call that follows it adds six fields 
 
 Missing `XIAOMI_USER_ID` or `XIAOMI_PASS_TOKEN` prints `error_code` `credentials_absent` and exits 1. That path does not call Xiaomi and does not write the database. A failed pull can record `sync_runs` and does not replace `daily_aggregates` with fixture rows. The command never runs `npm run pull:mock`.
 
-After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for that Shanghai day returns `source` `"db"`.
+After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for a Shanghai day in that window returns `source` `"db"` where Xiaomi had a daily row. `GET /v1/read/trends?range=week` reads those same `daily_aggregates` rows.
 
 ### GitHub Actions
 
@@ -173,7 +177,7 @@ After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for that Shanghai
 
 `npm run migrate` is idempotent. Applied versions are stored in `schema_migrations`. A second run on a database that already has the locked schema prints `schema up to date` and changes nothing.
 
-`npm run verify:live` queries Postgres with the `DATABASE_URL` secret. It counts `daily_aggregates` rows (`record_type = daily_summary`) and `samples` rows for Asia/Shanghai today, the last day of the pull window (that day and the previous day). `source` is `db` when that day has at least one `daily_aggregates` row, the same rule as `GET /v1/read/today`. Zero rows fail the step, because a read of that day would use `source` `fixture`. The job summary line is counts only:
+`npm run verify:live` queries Postgres with the `DATABASE_URL` secret. It counts `daily_aggregates` rows (`record_type = daily_summary`) and `samples` rows for Asia/Shanghai today, the last day of the 7-day pull window. `source` is `db` when that day has at least one `daily_aggregates` row, the same rule as `GET /v1/read/today`. Zero rows fail the step, because a read of that day would use `source` `fixture`. The job summary line is counts only:
 
 ```
 verify ok: day=YYYY-MM-DD aggregates=N samples=M source=db
@@ -205,11 +209,11 @@ Neon Free is the public Postgres for that `DATABASE_URL` secret. A new Neon proj
 
 Do not commit the URI. Do not add `serviceToken` or `ssecurity` as secrets.
 
-#### One-shot verify
+#### One-shot backfill
 
-On GitHub: **Actions → daily-live-pull → Run workflow**. Choose the branch that contains this workflow and run it.
+After this 7-day window is merged to `main`, run **Actions → daily-live-pull → Run workflow** once. That single run applies pending migrations, pulls the past 7 Asia/Shanghai calendar days, upserts them into Neon, then verifies today. Later scheduled runs keep the same 7-day window. This is not a multi-week archive.
 
-That dispatch applies pending migrations, pulls the Asia/Shanghai today window, then verifies that day in Postgres. If migrate fails, `pull:live` does not run. If the pull fails, verify does not run. A failed pull does not replace stored rows with fixture data. The job summary shows `verify ok: day=YYYY-MM-DD aggregates=N samples=M source=db` when that Shanghai day has `daily_aggregates` rows.
+If migrate fails, `pull:live` does not run. If the pull fails, verify does not run. A failed pull does not replace stored rows with fixture data. The job summary shows `verify ok: day=YYYY-MM-DD aggregates=N samples=M source=db` when that Shanghai day has `daily_aggregates` rows.
 
 ## Credentials
 
@@ -244,7 +248,7 @@ Render serves the phone UI over HTTPS. The service is the existing process: `npm
 
 Render is the free host that runs this Node process. Railway's ongoing free credit is $1 per month, which does not keep a service online. Fly.io has no free tier for new accounts (the smallest always-on machine is about $2 per month) and deploys through `flyctl`. A Render free instance sleeps after about 15 minutes without a request and takes about a minute to wake on the next open.
 
-The public host is the UI and the read API. Its only secret is `DATABASE_URL`. Leave `XIAOMI_USER_ID`, `XIAOMI_PASS_TOKEN`, and `XIAOMI_DEVICE_ID` on GitHub Actions. `serviceToken` and `ssecurity` stay runtime fields of the puller.
+The public host is the UI and the read API. Its only secret is `DATABASE_URL`. Leave `XIAOMI_USER_ID`, `XIAOMI_PASS_TOKEN`, and `XIAOMI_DEVICE_ID` on GitHub Actions. Do not set Xiaomi credentials on Render. `serviceToken` and `ssecurity` stay runtime fields of the puller.
 
 ### Ship from main
 

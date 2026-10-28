@@ -1,7 +1,8 @@
 # Daily stack X pull. Schedule is 06:30 Asia/Shanghai (22:30 UTC). No DST in that zone.
+# The pull covers the past 7 Asia/Shanghai calendar days (XIAOMI_PULL_WINDOW_DAYS, default 7).
 # The job applies pending migrations, pulls and ingests, then checks Asia/Shanghai
 # today has daily_aggregates in Postgres. A failed step stops the job.
-# Fixture batches are not part of this job.
+# Fixture batches are not part of this job. Xiaomi credentials stay in Actions, not on Render.
 name: daily-live-pull
 
 on:
@@ -40,12 +41,13 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: npm run migrate
 
-      - name: Pull Shanghai today and ingest
+      - name: Pull the past 7 Shanghai days and ingest
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           XIAOMI_USER_ID: ${{ secrets.XIAOMI_USER_ID }}
           XIAOMI_PASS_TOKEN: ${{ secrets.XIAOMI_PASS_TOKEN }}
           XIAOMI_DEVICE_ID: ${{ secrets.XIAOMI_DEVICE_ID }}
+          XIAOMI_PULL_WINDOW_DAYS: "7"
         run: npm run pull:live
 
       - name: Verify Shanghai today in Postgres
