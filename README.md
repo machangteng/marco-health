@@ -1,14 +1,14 @@
 # marco-health
 
-Local skeleton for Marco's health dashboard. The database is the locked FORGE-005 schema for 栈 X (`mi_health`, hlth.io.mi.com). `devices.source` is `mi_health`.
+Marco健康管家 for 栈 X (`mi_health`, hlth.io.mi.com). The database is the locked FORGE-005 schema. `devices.source` is `mi_health`.
 
-This repository boots a small Node.js service that checks Postgres and accepts stack X ingest batches. The FORGE-002 UI is a later ticket.
+The same Node process checks Postgres, accepts ingest batches, serves the FORGE-002 phone UI from `web/`, and answers the read API those screens use.
 
 ## Stack
 
 Node.js (TypeScript) and Postgres 16 via Docker Compose.
 
-Node fits the later HTTP ingest and read API in one typed service, and Postgres 16 satisfies the schema's PostgreSQL 15+ requirement. Docker Compose is the local database so the schema can be applied the same way on a clean machine.
+Node fits HTTP ingest and the read API in one typed service, and Postgres 16 satisfies the schema's PostgreSQL 15+ requirement. Docker Compose is the local database so the schema can be applied the same way on a clean machine.
 
 ## Prerequisites
 
@@ -41,13 +41,17 @@ Business dates use `Asia/Shanghai`. `devices.timezone` defaults to that zone. In
 npm run dev
 ```
 
-- `GET /` — service identity
+Open http://127.0.0.1:3000/ for the phone UI (今日 / 趋势 / 我的).
+
+- `GET /` — `web/index.html`
+- `GET /v1` — service route list
 - `GET /health` — live database check (`200` when Postgres answers, `503` when it does not)
 
 `schemaReady` on that payload is true after `npm run migrate`.
 
 - `POST /v1/ingest/batch` — schema 0.2 upsert. One bad record is rejected; the rest of the batch is kept.
 - `GET /v1/sync/runs/{sync_run_id}` — run status. The payload has no credentials.
+- `GET /v1/read/today`, `/v1/read/heart-rate`, `/v1/read/sleep`, `/v1/read/workouts`, `/v1/read/trends` — see Read API below.
 
 Wire name `hr_sample` is stored as `samples.record_type = heart_rate`. Idempotency is `UNIQUE (device_id, record_type, started_at)`. A newer `observed_at` overwrites. Day boundaries are `Asia/Shanghai`, and timestamps are stored with `+08:00`.
 
@@ -57,6 +61,37 @@ npm start
 ```
 
 `PORT` defaults to `3000`. Export `PORT` in the shell when you need another port.
+
+## Read API
+
+Day keys are `YYYY-MM-DD` in **Asia/Shanghai**. Optional `device_id` (uuid) limits the query to one device. Omit it and the latest `daily_aggregates` row in the window is used.
+
+| Method | Path | Body |
+| --- | --- | --- |
+| GET | `/v1/read/today?day=` | Rings, steps, `distance_m`, `floors`, `resting_hr_bpm`, `sleep_score`, `hr_zone_minutes`, `heart_rate` samples, `steps_minute` samples, sleep session + stages, recent workouts |
+| GET | `/v1/read/heart-rate?day=` | `heart_rate` samples for that Shanghai day |
+| GET | `/v1/read/sleep?day=` | Session whose wake instant falls on that day, plus stages |
+| GET | `/v1/read/workouts?day=` | Up to 8 workouts that started before the next Shanghai midnight |
+| GET | `/v1/read/trends?range=week\|month&day=` | Week: Monday–Sunday. Month: week buckets inside the calendar month |
+
+Every read object includes **`source`**:
+
+- `"db"` — the window had `daily_aggregates` rows. Numbers come from those columns and the related tables.
+- `"fixture"` — the window had no `daily_aggregates` rows. The payload is derived from `fixtures/mi_health/ingest-batch-0.2.json` so the UI still renders. There is no second copy of the numbers under `fixtures/ui/`.
+
+On a fixture today response, `day` is the fixture `daily_summary` day and `requested_day` is what the client asked for. Trend fixture responses keep the requested window and fill only the fixture day when it falls inside that window.
+
+### Rings
+
+These names are the `daily_aggregates` columns. The UI does not rename them.
+
+| Ring | Field |
+| --- | --- |
+| move | `active_kcal` |
+| exercise | `exercise_minutes` |
+| stand | `stand_hours` |
+
+`heart_rate` points are `samples` rows with `record_type = heart_rate`. `bpm` repeats `value_num`. Workout `title` is also returned as `sport_type_label` (the ingest wire name). Goals (650 kcal / 30 min / 12 h / 10,000 steps) live in the UI only.
 
 ## Migrations
 
@@ -104,12 +139,14 @@ The live probe calls `account.xiaomi.com` (pass token exchange), `sts-hlth.io.mi
 docker-compose.yml    Postgres 16
 db/migrations/         locked up/down SQL
 openapi/               ingest OpenAPI 0.2
-fixtures/mi_health/    mock puller batches
+fixtures/mi_health/    mock puller batches and the UI fixture fallback
 docs/                  path F contract v0.2
+web/                   FORGE-002 phone UI
 src/index.ts           HTTP server
 src/health.ts          database health check
 src/migrate.ts         migration runner
 src/ingest/            batch upsert
+src/read/              today and trend reads
 src/pull/              mock puller and optional live probe
 .env.example           DATABASE_URL and blank Xiaomi placeholders
 ```
@@ -128,7 +165,7 @@ Do not commit those values. Logs redact them.
 
 ## Checks
 
-`npm test` includes the Postgres integration tests, so the Compose database has to be up and migrated.
+`npm test` includes the Postgres integration tests, so the Compose database has to be up and migrated. Read tests cover ring columns from a seeded `daily_aggregates` row, and the fixture fallback when that day has no row.
 
 ```bash
 docker compose up -d --wait
