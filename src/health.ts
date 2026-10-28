@@ -20,16 +20,29 @@ export type SqlQuery = (
   params?: unknown[],
 ) => Promise<{ rows: Array<Record<string, unknown>> }>;
 
+export function errorMessage(error: unknown): string {
+  if (error instanceof AggregateError) {
+    const parts = error.errors.map((inner) => errorMessage(inner)).filter((part) => part !== "");
+    if (parts.length > 0) return parts.join("; ");
+  }
+  if (error instanceof Error && error.message !== "") return error.message;
+  if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
+    return error.code;
+  }
+  const text = String(error);
+  return text === "" ? "unknown database error" : text;
+}
+
 export function unreachableHealth(error: unknown): HealthReport {
   return {
     ok: false,
     schemaReady: false,
     database: null,
     serverVersion: null,
-    missingRelations: [...EXPECTED_RELATIONS],
+    missingRelations: [],
     missingColumns: [],
     deviceSourcesOk: false,
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage(error),
   };
 }
 
@@ -48,7 +61,8 @@ export async function checkHealth(query: SqlQuery): Promise<HealthReport> {
      WHERE n.nspname = 'public'
        AND c.relkind IN ('r', 'v', 'p')
        AND c.relname = ANY($1::text[])`,
-    [...EXPECTED_RELATIONS],
+    // One bound parameter whose value is a text[] of relation names.
+    [[...EXPECTED_RELATIONS]],
   );
   const present = new Set(relationResult.rows.map((row) => String(row.name)));
   const missingRelations = EXPECTED_RELATIONS.filter((name) => !present.has(name));
