@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Pool } from "pg";
 import { checkHealth, unreachableHealth, type SqlQuery } from "./health.js";
@@ -5,7 +6,11 @@ import { ingestBatch } from "./ingest/batch.js";
 import { isUuid } from "./ingest/validate.js";
 import { maskSecrets } from "./mask.js";
 import { asQueryable } from "./query.js";
+import type { TodayResponse } from "./read/present.js";
+import { readToday, readTrends, type ReadQuery } from "./read/service.js";
 import { getSyncRun } from "./sync-run.js";
+import { isCalendarDay, shanghaiDay } from "./time.js";
+import { contentTypeFor, resolveWebFile } from "./web-static.js";
 
 const MAX_BODY_BYTES = 2_000_000;
 
@@ -29,12 +34,20 @@ export function createApp(pool: Pool): Server {
 export async function handleRequest(pool: Pool, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const path = (request.url ?? "/").split("?")[0] ?? "/";
   try {
-    if (request.method === "GET" && path === "/") {
+    if (request.method === "GET" && path === "/v1") {
       send(response, 200, {
         service: "marco-health",
         source: "mi_health",
+        ui: "/",
         health: "/health",
         ingest: "/v1/ingest/batch",
+        read: {
+          today: "/v1/read/today",
+          heart_rate: "/v1/read/heart-rate",
+          sleep: "/v1/read/sleep",
+          workouts: "/v1/read/workouts",
+          trends: "/v1/read/trends",
+        },
       });
       return;
     }
@@ -86,6 +99,22 @@ export async function handleRequest(pool: Pool, request: IncomingMessage, respon
       send(response, 200, row);
       return;
     }
+    if (path.startsWith("/v1/read/")) {
+      await handleRead(pool, request, response, path);
+      return;
+    }
+    if (request.method === "GET") {
+      const file = resolveWebFile(path);
+      if (file) {
+        const body = await readFile(file);
+        response.writeHead(200, {
+          "content-type": contentTypeFor(file),
+          "cache-control": "no-store",
+        });
+        response.end(body);
+        return;
+      }
+    }
     send(response, 404, { error: "not_found" });
   } catch (error) {
     if (error instanceof HttpError) {
@@ -94,8 +123,96 @@ export async function handleRequest(pool: Pool, request: IncomingMessage, respon
     }
     const message = error instanceof Error ? error.message : "internal error";
     console.error(maskSecrets(message, secretValues()));
-    send(response, 500, { error: "internal_error", detail: "Ingest failed." });
+    send(response, 500, { error: "internal_error", detail: "Request failed." });
   }
+}
+
+async function handleRead(
+  pool: Pool,
+  request: IncomingMessage,
+  response: ServerResponse,
+  path: string,
+): Promise<void> {
+  if (request.method !== "GET") {
+    send(response, 405, { error: "method_not_allowed", detail: "Use GET." });
+    return;
+  }
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const parsed = readParams(url);
+  if ("error" in parsed) {
+    send(response, 400, parsed);
+    return;
+  }
+  const db = asQueryable(pool);
+  if (path === "/v1/read/trends") {
+    const range = url.searchParams.get("range") ?? "week";
+    if (range !== "week" && range !== "month") {
+      send(response, 400, { error: "invalid_range", detail: "range must be week or month." });
+      return;
+    }
+    send(response, 200, await readTrends(db, { ...parsed, range }));
+    return;
+  }
+  const today = await readToday(db, parsed);
+  if (path === "/v1/read/today") {
+    send(response, 200, today);
+    return;
+  }
+  if (path === "/v1/read/heart-rate") {
+    send(response, 200, sliceHeart(today));
+    return;
+  }
+  if (path === "/v1/read/sleep") {
+    send(response, 200, sliceSleep(today));
+    return;
+  }
+  if (path === "/v1/read/workouts") {
+    send(response, 200, sliceWorkouts(today));
+    return;
+  }
+  send(response, 404, { error: "not_found" });
+}
+
+function readParams(url: URL): ReadQuery | { error: string; detail: string } {
+  const rawDay = url.searchParams.get("day");
+  const day = rawDay === null || rawDay === "" ? shanghaiDay(new Date()) : rawDay;
+  if (!isCalendarDay(day)) return { error: "invalid_day", detail: "day must be YYYY-MM-DD." };
+  const rawDevice = url.searchParams.get("device_id");
+  if (rawDevice === null || rawDevice === "") return { day, deviceId: null };
+  const deviceId = rawDevice.toLowerCase();
+  if (!isUuid(deviceId)) return { error: "invalid_device_id", detail: "device_id must be a UUID." };
+  return { day, deviceId };
+}
+
+function sliceHeart(today: TodayResponse) {
+  return {
+    source: today.source,
+    timezone: today.timezone,
+    day: today.day,
+    requested_day: today.requested_day,
+    heart_rate: today.heart_rate,
+  };
+}
+
+function sliceSleep(today: TodayResponse) {
+  return {
+    source: today.source,
+    timezone: today.timezone,
+    day: today.day,
+    requested_day: today.requested_day,
+    sleep_score: today.sleep_score,
+    sleep: today.sleep,
+  };
+}
+
+function sliceWorkouts(today: TodayResponse) {
+  return {
+    source: today.source,
+    timezone: today.timezone,
+    day: today.day,
+    requested_day: today.requested_day,
+    workouts: today.workouts,
+  };
 }
 
 function assertJsonContentType(request: IncomingMessage): void {

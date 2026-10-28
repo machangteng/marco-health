@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Marco健康管家</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("marco-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  <div class="desktop-backdrop" aria-hidden="true"></div>
+
+  <div class="phone-frame" role="application" aria-label="Marco健康管家原型">
+    <div class="phone-notch" aria-hidden="true"></div>
+    <div class="phone-status" aria-hidden="true">
+      <span class="status-time" id="status-time">9:41</span>
+      <span class="status-icons">
+        <span class="sig"></span><span class="wifi"></span><span class="bat"></span>
+      </span>
+    </div>
+
+    <main id="main-content" class="app" tabindex="-1">
+      <!-- ===== 今日 ===== -->
+      <section id="tab-today" class="tab-panel is-active" role="tabpanel" aria-labelledby="nav-today" data-tab="today">
+        <header class="app-header app-header-row">
+          <div>
+            <p class="eyebrow">星期三 · 10月28日</p>
+            <h1>今日概览</h1>
+          </div>
+          <button type="button" class="theme-toggle" id="theme-toggle-today" aria-label="切换浅色/深色主题" title="切换主题">
+            <span class="theme-icon theme-icon-moon" aria-hidden="true">☾</span>
+            <span class="theme-icon theme-icon-sun" aria-hidden="true">☀</span>
+          </button>
+        </header>
+
+        <!-- 1. 三环 -->
+        <article class="card card-rings" aria-labelledby="rings-heading">
+          <h2 id="rings-heading" class="card-title">活动圆环</h2>
+          <div class="rings-layout">
+            <div class="rings-svg-wrap" role="img" aria-label="活动圆环：活动 620/650 千卡，锻炼 32/30 分钟，站立 10/12 小时">
+              <svg id="activity-rings" class="activity-rings" viewBox="0 0 200 200" width="200" height="200" aria-hidden="true">
+                <circle class="ring-track" cx="100" cy="100" r="82" />
+                <circle class="ring-track" cx="100" cy="100" r="64" />
+                <circle class="ring-track" cx="100" cy="100" r="46" />
+                <circle id="ring-move" class="ring-progress ring-move" cx="100" cy="100" r="82"
+                  pathLength="100" stroke-dasharray="0 100" />
+                <circle id="ring-exercise" class="ring-progress ring-exercise" cx="100" cy="100" r="64"
+                  pathLength="100" stroke-dasharray="0 100" />
+                <circle id="ring-stand" class="ring-progress ring-stand" cx="100" cy="100" r="46"
+                  pathLength="100" stroke-dasharray="0 100" />
+              </svg>
+            </div>
+            <ul class="rings-legend" aria-label="圆环目标进度">
+              <li>
+                <span class="dot move" aria-hidden="true"></span>
+                <div class="legend-text">
+                  <span class="label">活动</span>
+                  <span class="legend-value-line"><strong id="move-value">620</strong><span class="unit">/650 千卡</span></span>
+                </div>
+              </li>
+              <li>
+                <span class="dot exercise" aria-hidden="true"></span>
+                <div class="legend-text">
+                  <span class="label">锻炼</span>
+                  <span class="legend-value-line"><strong id="exercise-value">32</strong><span class="unit">/30 分钟</span></span>
+                </div>
+              </li>
+              <li>
+                <span class="dot stand" aria-hidden="true"></span>
+                <div class="legend-text">
+                  <span class="label">站立</span>
+                  <span class="legend-value-line"><strong id="stand-value">10</strong><span class="unit">/12 小时</span></span>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </article>
+
+        <!-- 2. 步数 + 距离 -->
+        <article class="card" aria-labelledby="steps-heading">
+          <h2 id="steps-heading" class="card-title">步数与距离</h2>
+          <div class="stat-row">
+            <div class="stat-block">
+              <p class="stat-label">步数</p>
+              <p class="stat-value"><span id="steps-value">8,642</span></p>
+              <p class="stat-sub">目标 10,000 · <span id="steps-pct">86%</span></p>
+              <div class="progress-bar" role="progressbar" aria-valuenow="86" aria-valuemin="0" aria-valuemax="100" aria-label="步数进度 86%">
+                <div class="progress-fill steps" id="steps-bar" style="width:86%"></div>
+              </div>
+            </div>
+            <div class="stat-block">
+              <p class="stat-label">距离</p>
+              <p class="stat-value"><span id="distance-value">6.2</span><span class="stat-unit">公里</span></p>
+              <p class="stat-sub" id="floors-line">爬升 <span id="floors-value">14</span> 层</p>
+            </div>
+          </div>
+          <div class="spark-wrap" id="steps-spark-wrap" aria-label="今日每小时步数走势">
+            <svg id="steps-spark" class="sparkline" viewBox="0 0 320 48" preserveAspectRatio="none" role="img" aria-label="今日步数火花图"></svg>
+          </div>
+        </article>
+
+        <!-- 3. 心率 -->
+        <article class="card" aria-labelledby="hr-heading">
+          <h2 id="hr-heading" class="card-title">心率</h2>
+          <div class="stat-row hr-row">
+            <div class="stat-block">
+              <p class="stat-label">静息心率</p>
+              <p class="stat-value accent-red"><span id="hr-resting">58</span><span class="stat-unit">次/分</span></p>
+              <p class="stat-sub" id="hr-resting-note">偏低 · 状态良好</p>
+            </div>
+            <div class="stat-block">
+              <p class="stat-label">最近</p>
+              <p class="stat-value"><span id="hr-recent">72</span><span class="stat-unit">次/分</span></p>
+              <p class="stat-sub" id="hr-recent-time">14:22 测量</p>
+            </div>
+          </div>
+          <h3 class="subhead">心率区间（今日）</h3>
+          <ul class="zone-list" id="hr-zones" aria-label="心率区间分布"></ul>
+        </article>
+
+        <!-- 4. 睡眠 -->
+        <article class="card" aria-labelledby="sleep-heading">
+          <h2 id="sleep-heading" class="card-title">睡眠</h2>
+          <div class="stat-row">
+            <div class="stat-block">
+              <p class="stat-label">昨晚时长</p>
+              <p class="stat-value"><span id="sleep-duration">7</span><span class="stat-unit">小时</span>
+                <span id="sleep-mins" class="stat-value-sm">24</span><span class="stat-unit">分</span></p>
+              <p class="stat-sub" id="sleep-window">23:18 — 06:42</p>
+            </div>
+            <div class="stat-block">
+              <p class="stat-label">睡眠评分</p>
+              <p class="stat-value accent-teal"><span id="sleep-score">86</span></p>
+              <p class="stat-sub" id="sleep-quality">优质</p>
+            </div>
+          </div>
+          <h3 class="subhead">睡眠阶段</h3>
+          <div class="sleep-stages" id="sleep-stages" role="img" aria-label="睡眠阶段图：深睡、浅睡、REM、清醒"></div>
+          <ul class="stage-legend" id="stage-legend"></ul>
+        </article>
+
+        <!-- 5. 卡路里 + 锻炼记录 -->
+        <article class="card" aria-labelledby="cal-heading">
+          <h2 id="cal-heading" class="card-title">卡路里与锻炼</h2>
+          <div class="stat-row">
+            <div class="stat-block">
+              <p class="stat-label">活动消耗</p>
+              <p class="stat-value accent-pink"><span id="cal-active">620</span><span class="stat-unit">千卡</span></p>
+            </div>
+            <div class="stat-block">
+              <p class="stat-label">总消耗</p>
+              <p class="stat-value"><span id="cal-total">2,140</span><span class="stat-unit" id="cal-total-unit">千卡</span></p>
+            </div>
+          </div>
+          <h3 class="subhead">最近锻炼</h3>
+          <ul class="workout-list" id="workout-list" aria-label="锻炼历史"></ul>
+        </article>
+      </section>
+
+      <!-- ===== 趋势 ===== -->
+      <section id="tab-trends" class="tab-panel" role="tabpanel" aria-labelledby="nav-trends" data-tab="trends" hidden>
+        <header class="app-header app-header-row">
+          <div>
+            <p class="eyebrow">数据洞察</p>
+            <h1>趋势</h1>
+          </div>
+          <button type="button" class="theme-toggle" id="theme-toggle-trends" aria-label="切换浅色/深色主题" title="切换主题">
+            <span class="theme-icon theme-icon-moon" aria-hidden="true">☾</span>
+            <span class="theme-icon theme-icon-sun" aria-hidden="true">☀</span>
+          </button>
+        </header>
+        <div class="segmented" role="tablist" aria-label="趋势时间范围">
+          <button type="button" class="seg-btn is-active" role="tab" aria-selected="true" data-range="week" id="range-week">本周</button>
+          <button type="button" class="seg-btn" role="tab" aria-selected="false" data-range="month" id="range-month">本月</button>
+        </div>
+
+        <!-- 6. Weekly / monthly trends -->
+        <article class="card" aria-labelledby="trend-rings-heading">
+          <h2 id="trend-rings-heading" class="card-title">三环完成度</h2>
+          <div class="chart-wrap" id="chart-rings" role="img" aria-label="三环完成度柱状图"></div>
+          <ul class="mini-legend" aria-hidden="true">
+            <li><span class="dot move"></span>活动</li>
+            <li><span class="dot exercise"></span>锻炼</li>
+            <li><span class="dot stand"></span>站立</li>
+          </ul>
+        </article>
+
+        <article class="card" aria-labelledby="trend-steps-heading">
+          <h2 id="trend-steps-heading" class="card-title">步数趋势</h2>
+          <p class="chart-summary"><span id="steps-avg-label">日均</span> <strong id="steps-avg">9,120</strong> 步</p>
+          <div class="chart-wrap" id="chart-steps" role="img" aria-label="步数趋势柱状图"></div>
+        </article>
+
+        <article class="card" aria-labelledby="trend-hr-heading">
+          <h2 id="trend-hr-heading" class="card-title">静息心率趋势</h2>
+          <p class="chart-summary">平均 <strong id="hr-avg">59</strong> 次/分</p>
+          <div class="chart-wrap line-chart" id="chart-hr" role="img" aria-label="静息心率折线图"></div>
+        </article>
+
+        <article class="card" aria-labelledby="trend-sleep-heading">
+          <h2 id="trend-sleep-heading" class="card-title">睡眠时长趋势</h2>
+          <p class="chart-summary">平均 <strong id="sleep-avg">7.1</strong> 小时</p>
+          <div class="chart-wrap" id="chart-sleep" role="img" aria-label="睡眠时长柱状图"></div>
+        </article>
+
+        <article class="card" aria-labelledby="trend-cal-heading">
+          <h2 id="trend-cal-heading" class="card-title">活动消耗趋势</h2>
+          <p class="chart-summary">平均 <strong id="cal-avg">580</strong> 千卡</p>
+          <div class="chart-wrap" id="chart-cal" role="img" aria-label="卡路里趋势柱状图"></div>
+        </article>
+      </section>
+
+      <!-- ===== 我的 ===== -->
+      <section id="tab-me" class="tab-panel" role="tabpanel" aria-labelledby="nav-me" data-tab="me" hidden>
+        <header class="app-header">
+          <p class="eyebrow">个人中心</p>
+          <h1>我的</h1>
+        </header>
+
+        <article class="card profile-card" aria-labelledby="profile-heading">
+          <div class="avatar" aria-hidden="true">马</div>
+          <div>
+            <h2 id="profile-heading" class="profile-name">Marco</h2>
+            <p class="profile-meta">目标：保持活力 · 改善睡眠</p>
+          </div>
+        </article>
+
+        <article class="card" aria-labelledby="appearance-heading">
+          <h2 id="appearance-heading" class="card-title">外观</h2>
+          <div class="theme-row">
+            <div>
+              <p class="theme-row-label">显示模式</p>
+              <p class="theme-row-hint">深色 / 浅色，自动记住你的选择</p>
+            </div>
+            <button type="button" class="theme-switch" id="theme-toggle-me" aria-pressed="false" aria-label="切换浅色/深色主题">
+              <span class="theme-switch-track" aria-hidden="true">
+                <span class="theme-switch-knob"></span>
+              </span>
+              <span class="theme-switch-text" id="theme-label">深色</span>
+            </button>
+          </div>
+        </article>
+
+        <article class="card" aria-labelledby="device-heading">
+          <h2 id="device-heading" class="card-title">设备</h2>
+          <div class="device-row">
+            <div class="device-icon" aria-hidden="true">⌚</div>
+            <div class="device-info">
+              <p class="device-name">小米手环 8</p>
+              <p class="device-status" id="device-status">模拟数据 · 尚未连接</p>
+            </div>
+            <span class="badge">原型</span>
+          </div>
+          <p class="hint" id="device-hint">正式版将对接小米运动健康同步（BOT-061）。当前展示均为样例数据。</p>
+        </article>
+
+        <article class="card" aria-labelledby="goals-heading">
+          <h2 id="goals-heading" class="card-title">每日目标</h2>
+          <ul class="settings-list">
+            <li><span>活动</span><strong>650 千卡</strong></li>
+            <li><span>锻炼</span><strong>30 分钟</strong></li>
+            <li><span>站立</span><strong>12 小时</strong></li>
+            <li><span>步数</span><strong>10,000 步</strong></li>
+          </ul>
+        </article>
+
+        <article class="card" aria-labelledby="about-heading">
+          <h2 id="about-heading" class="card-title">关于</h2>
+          <ul class="settings-list">
+            <li><span>产品</span><strong>Marco健康管家</strong></li>
+            <li><span>版本</span><strong>FORGE-002 UI 原型</strong></li>
+            <li><span>视觉</span><strong>Apple Fitness 风格</strong></li>
+          </ul>
+        </article>
+      </section>
+    </main>
+
+    <nav class="tab-bar" role="tablist" aria-label="主导航">
+      <button type="button" class="tab-btn is-active" role="tab" id="nav-today" aria-selected="true" aria-controls="tab-today" data-tab="today">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+        <span>今日</span>
+      </button>
+      <button type="button" class="tab-btn" role="tab" id="nav-trends" aria-selected="false" aria-controls="tab-trends" data-tab="trends">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V10M10 18V6M16 18v-5M20 18H3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>趋势</span>
+      </button>
+      <button type="button" class="tab-btn" role="tab" id="nav-me" aria-selected="false" aria-controls="tab-me" data-tab="me">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>我的</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
