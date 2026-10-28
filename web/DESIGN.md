@@ -88,12 +88,13 @@ SVG `pathLength="100"` + `stroke-dasharray` 驱动进度；加载时带缓动动
 - 卡片间距：`16px`
 - 小圆角（进度条等）：`10px` / `3–4px`
 - 底部安全区：`34px`（Tab bar 下方）
+- 内容区顶部：去掉模拟状态栏后用紧凑内边距，并尊重 `env(safe-area-inset-top)`，避免日期钻进刘海
 - 内容区底部留白：`tab-h + safe-bottom + 28px`（并兼顾 `env(safe-area-inset-bottom)`），避免末张卡片被底栏遮挡
 - 手机框：`390×844`，外圆角 `44px`
 
 ## 布局
 
-1. **桌面**：渐变 backdrop + 居中手机外框 + 状态栏/刘海装饰
+1. **桌面**：渐变 backdrop + 居中手机外框（无模拟状态栏 / 刘海）
 2. **内容区**：可滚动 `main`，底部留出 Tab bar 高度
 3. **Tab bar**：毛玻璃半透明，三项「今日 / 趋势 / 我的」
 
