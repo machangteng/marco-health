@@ -1,0 +1,31 @@
+{
+  "name": "marco-health",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Marco health dashboard skeleton for 栈 X (mi_health) with the locked Postgres schema.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts",
+    "migrate": "tsx src/migrate.ts up",
+    "migrate:down": "tsx src/migrate.ts down",
+    "migrate:status": "tsx src/migrate.ts status",
+    "health": "tsx src/healthcheck.ts",
+    "check": "tsc --noEmit && tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

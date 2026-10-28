@@ -1,0 +1,25 @@
+# Local Postgres 16 for marco-health. Credentials match .env.example.
+name: marco-health
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: marco-health-postgres
+    environment:
+      POSTGRES_USER: marco
+      POSTGRES_PASSWORD: marco
+      POSTGRES_DB: marco_health
+    ports:
+      - "5432:5432"
+    volumes:
+      - marco-health-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marco -d marco_health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  marco-health-pg:
