@@ -1,5 +1,5 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Pool } from "pg";
+import { createApp } from "./app.js";
 import { createPool } from "./db.js";
 import { describeDatabaseUrl, getDatabaseUrl } from "./env.js";
 import { checkHealth, unreachableHealth, type HealthReport, type SqlQuery } from "./health.js";
@@ -11,10 +11,7 @@ async function main(): Promise<void> {
   console.log(`postgres target ${target}`);
   const pool = createPool();
   const query = sqlQuery(pool);
-
-  const server = createServer((request, response) => {
-    void handle(query, request, response);
-  });
+  const server = createApp(pool);
 
   await new Promise<void>((resolveListen, rejectListen) => {
     const onError = (error: Error) => {
@@ -42,20 +39,6 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-async function handle(query: SqlQuery, request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const path = (request.url ?? "/").split("?")[0] ?? "/";
-  if (request.method === "GET" && path === "/") {
-    send(response, 200, { service: "marco-health", source: "mi_health", health: "/health" });
-    return;
-  }
-  if (request.method === "GET" && path === "/health") {
-    const report = await probe(query);
-    send(response, report.ok ? 200 : 503, report);
-    return;
-  }
-  send(response, 404, { error: "not_found" });
-}
-
 async function probe(query: SqlQuery): Promise<HealthReport> {
   try {
     return await checkHealth(query);
@@ -69,14 +52,6 @@ function sqlQuery(pool: Pool): SqlQuery {
     const result = await pool.query(sql, params);
     return { rows: result.rows as Array<Record<string, unknown>> };
   };
-}
-
-function send(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store",
-  });
-  response.end(JSON.stringify(body));
 }
 
 function readPort(): number {

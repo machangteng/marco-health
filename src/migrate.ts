@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Client } from "pg";
 import { connectWithRetry } from "./db.js";
@@ -154,8 +154,24 @@ async function printStatus(client: Client): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
-  process.exit(1);
-});
+export async function migrateToHead(client: Client): Promise<void> {
+  await client.query("SELECT pg_advisory_lock($1::int)", [ADVISORY_LOCK_KEY]);
+  try {
+    await migrateUp(client);
+  } finally {
+    await client.query("SELECT pg_advisory_unlock($1::int)", [ADVISORY_LOCK_KEY]).catch(() => undefined);
+  }
+}
+
+function invokedDirectly(): boolean {
+  const entry = process.argv[1] ?? "";
+  return entry.endsWith(`${sep}migrate.ts`) || entry.endsWith(`${sep}migrate.js`) || entry.endsWith("/migrate.ts") || entry.endsWith("/migrate.js");
+}
+
+if (invokedDirectly()) {
+  main().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    process.exit(1);
+  });
+}

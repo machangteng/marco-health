@@ -1,0 +1,80 @@
+{
+  "schema_version": "0.2",
+  "source": "mi_health",
+  "vendor_sid": "sid-mock-001",
+  "sync_run_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "observed_at": "2026-10-28T06:31:00+08:00",
+  "records": [
+    {
+      "type": "daily_summary",
+      "day": "2026-10-27",
+      "started_at": "2026-10-27T00:00:00+08:00",
+      "steps": 8432,
+      "distance_m": 5820.5,
+      "floors": null,
+      "active_kcal": 312,
+      "exercise_minutes": 28,
+      "stand_hours": 10,
+      "resting_hr_bpm": 58,
+      "hr_zone_minutes": {
+        "warm_up": 40,
+        "fat_burning": 25,
+        "aerobic": 12,
+        "anaerobic": 3,
+        "extreme": 0
+      },
+      "sleep_score": 82
+    },
+    {
+      "type": "hr_sample",
+      "started_at": "2026-10-27T14:20:00+08:00",
+      "bpm": 76
+    },
+    {
+      "type": "sleep_session",
+      "started_at": "2026-10-26T23:40:00+08:00",
+      "ended_at": "2026-10-27T07:05:00+08:00",
+      "score": 82,
+      "stages": [
+        {
+          "stage": "light",
+          "started_at": "2026-10-26T23:40:00+08:00",
+          "ended_at": "2026-10-27T00:55:00+08:00"
+        },
+        {
+          "stage": "deep",
+          "started_at": "2026-10-27T00:55:00+08:00",
+          "ended_at": "2026-10-27T02:10:00+08:00"
+        },
+        {
+          "stage": "rem",
+          "started_at": "2026-10-27T02:10:00+08:00",
+          "ended_at": "2026-10-27T02:45:00+08:00"
+        },
+        {
+          "stage": "awake",
+          "started_at": "2026-10-27T02:45:00+08:00",
+          "ended_at": "2026-10-27T02:52:00+08:00"
+        },
+        {
+          "stage": "light",
+          "started_at": "2026-10-27T02:52:00+08:00",
+          "ended_at": "2026-10-27T07:05:00+08:00"
+        }
+      ]
+    },
+    {
+      "type": "workout",
+      "started_at": "2026-10-27T18:00:00+08:00",
+      "ended_at": "2026-10-27T18:42:00+08:00",
+      "sport_type": "outdoor_running",
+      "sport_type_label": "户外跑步",
+      "duration_sec": 2520,
+      "distance_m": 5200,
+      "active_kcal": 380,
+      "avg_hr_bpm": 142,
+      "max_hr_bpm": 168,
+      "vendor_sid": "sid-mock-001"
+    }
+  ]
+}
