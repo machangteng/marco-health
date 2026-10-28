@@ -1,0 +1,478 @@
+openapi: 3.1.0
+info:
+  title: Marco Health · Ingest API (FORGE-007)
+  version: 0.2.0
+  description: |
+    Stack X ingest contract for 小米运动健康 → Postgres (FORGE-005).
+    Source of truth: FORGE-003-path-f-contract.md v0.2.
+    Secrets (passToken / serviceToken / ssecurity) MUST NOT appear in repo, logs, or fixtures.
+    Mock/dry-run is the default. A live hlth.io.mi.com probe runs only when process env credentials are present.
+  contact:
+    name: BOT-061 API & Integrations Engineer
+servers:
+  - url: http://localhost:3000
+    description: Local / CI (PORT defaults to 3000)
+tags:
+  - name: ingest
+  - name: sync
+
+paths:
+  /v1/ingest/batch:
+    post:
+      tags: [ingest]
+      operationId: ingestBatch
+      summary: Upsert normalized fitness records (idempotent)
+      description: |
+        Accepts a batch from the stack-X puller (or a mock fixture).
+        Per-record validation: reject bad items, do not roll back the whole batch.
+        Idempotency: UNIQUE (device_id, record_type, started_at) — see FORGE-005.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestBatchRequest'
+            examples:
+              dry_run_fixture:
+                summary: Mock fixture covering all four record types
+                value:
+                  {
+                    "schema_version": "0.2",
+                    "source": "mi_health",
+                    "vendor_sid": "sid-mock-001",
+                    "sync_run_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                    "observed_at": "2026-10-28T06:31:00+08:00",
+                    "records": [
+                      {
+                        "type": "daily_summary",
+                        "day": "2026-10-27",
+                        "started_at": "2026-10-27T00:00:00+08:00",
+                        "steps": 8432,
+                        "distance_m": 5820.5,
+                        "floors": null,
+                        "active_kcal": 312,
+                        "exercise_minutes": 28,
+                        "stand_hours": 10,
+                        "resting_hr_bpm": 58,
+                        "hr_zone_minutes": {
+                          "warm_up": 40,
+                          "fat_burning": 25,
+                          "aerobic": 12,
+                          "anaerobic": 3,
+                          "extreme": 0
+                        },
+                        "sleep_score": 82
+                      },
+                      {
+                        "type": "hr_sample",
+                        "started_at": "2026-10-27T14:20:00+08:00",
+                        "bpm": 76
+                      },
+                      {
+                        "type": "sleep_session",
+                        "started_at": "2026-10-26T23:40:00+08:00",
+                        "ended_at": "2026-10-27T07:05:00+08:00",
+                        "score": 82,
+                        "stages": [
+                          {
+                            "stage": "light",
+                            "started_at": "2026-10-26T23:40:00+08:00",
+                            "ended_at": "2026-10-27T00:55:00+08:00"
+                          },
+                          {
+                            "stage": "deep",
+                            "started_at": "2026-10-27T00:55:00+08:00",
+                            "ended_at": "2026-10-27T02:10:00+08:00"
+                          },
+                          {
+                            "stage": "rem",
+                            "started_at": "2026-10-27T02:10:00+08:00",
+                            "ended_at": "2026-10-27T02:45:00+08:00"
+                          },
+                          {
+                            "stage": "awake",
+                            "started_at": "2026-10-27T02:45:00+08:00",
+                            "ended_at": "2026-10-27T02:52:00+08:00"
+                          },
+                          {
+                            "stage": "light",
+                            "started_at": "2026-10-27T02:52:00+08:00",
+                            "ended_at": "2026-10-27T07:05:00+08:00"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "workout",
+                        "started_at": "2026-10-27T18:00:00+08:00",
+                        "ended_at": "2026-10-27T18:42:00+08:00",
+                        "sport_type": "outdoor_running",
+                        "sport_type_label": "户外跑步",
+                        "duration_sec": 2520,
+                        "distance_m": 5200,
+                        "active_kcal": 380,
+                        "avg_hr_bpm": 142,
+                        "max_hr_bpm": 168,
+                        "vendor_sid": "sid-mock-001"
+                      }
+                    ]
+                  }
+      responses:
+        '200':
+          description: Batch processed (may include per-item rejects)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestBatchResponse'
+              example:
+                sync_run_id: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                accepted: 4
+                upserted: 4
+                unchanged: 0
+                rejected: []
+        '400':
+          description: Malformed envelope (missing schema_version / records)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Caller auth failed (service API key) — not Xiaomi passToken
+        '409':
+          description: source mismatch / device conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/sync/runs/{sync_run_id}:
+    get:
+      tags: [sync]
+      operationId: getSyncRun
+      summary: Ops status for a pull/ingest run (no secrets)
+      parameters:
+        - name: sync_run_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Sync run row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncRun'
+        '404':
+          description: Not found
+
+components:
+  schemas:
+    IngestBatchRequest:
+      type: object
+      required: [schema_version, source, sync_run_id, observed_at, records]
+      properties:
+        schema_version:
+          type: string
+          enum: ['0.2']
+        device_id:
+          type: string
+          description: Server devices.id UUID when known; omit on first create and pass vendor_sid / external_id via device bootstrap.
+          format: uuid
+        source:
+          type: string
+          enum: [mi_health]
+        vendor_sid:
+          type: [string, 'null']
+          description: Upstream Xiaomi sid; optional
+        sync_run_id:
+          type: string
+          format: uuid
+        observed_at:
+          type: string
+          format: date-time
+          description: ISO-8601 with offset, prefer +08:00
+        records:
+          type: array
+          minItems: 1
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/DailySummaryRecord'
+              - $ref: '#/components/schemas/HrSampleRecord'
+              - $ref: '#/components/schemas/SleepSessionRecord'
+              - $ref: '#/components/schemas/WorkoutRecord'
+            discriminator:
+              propertyName: type
+              mapping:
+                daily_summary: '#/components/schemas/DailySummaryRecord'
+                hr_sample: '#/components/schemas/HrSampleRecord'
+                sleep_session: '#/components/schemas/SleepSessionRecord'
+                workout: '#/components/schemas/WorkoutRecord'
+
+    DailySummaryRecord:
+      type: object
+      required: [type, day, started_at]
+      properties:
+        type:
+          type: string
+          const: daily_summary
+        day:
+          type: string
+          format: date
+          description: Asia/Shanghai calendar day
+        started_at:
+          type: string
+          format: date-time
+          description: Idempotency timestamp = day 00:00:00+08:00
+        steps:
+          type: integer
+          minimum: 0
+        distance_m:
+          type: number
+          minimum: 0
+        floors:
+          type: [integer, 'null']
+        active_kcal:
+          type: number
+          description: rings.move ← calories.calories (NOT steps.calories)
+        exercise_minutes:
+          type: integer
+          description: rings.exercise ← intensity.duration
+        stand_hours:
+          type: integer
+          minimum: 0
+          maximum: 24
+          description: rings.stand ← valid_stand.count
+        resting_hr_bpm:
+          type: [integer, 'null']
+        hr_zone_minutes:
+          type: [object, 'null']
+          additionalProperties:
+            type: number
+          description: Mapped from *_hr_zone_duration; keys implementation-defined
+        sleep_score:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+
+    HrSampleRecord:
+      type: object
+      description: Wire name stays hr_sample. Stored as samples.record_type heart_rate.
+      required: [type, started_at, bpm]
+      properties:
+        type:
+          type: string
+          const: hr_sample
+        started_at:
+          type: string
+          format: date-time
+        bpm:
+          type: integer
+          minimum: 20
+          maximum: 250
+        end_at:
+          type: [string, 'null']
+          format: date-time
+        sample_kind:
+          type: [string, 'null']
+          description: Upstream value.type if present
+
+    SleepStage:
+      type: object
+      required: [stage, started_at, ended_at]
+      properties:
+        stage:
+          type: string
+          enum: [deep, light, rem, awake, unknown]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+
+    SleepSessionRecord:
+      type: object
+      required: [type, started_at, ended_at]
+      properties:
+        type:
+          type: string
+          const: sleep_session
+        started_at:
+          type: string
+          format: date-time
+          description: bedtime — idempotency key
+        ended_at:
+          type: string
+          format: date-time
+          description: wake_up_time
+        score:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/SleepStage'
+
+    WorkoutRecord:
+      type: object
+      required: [type, started_at, ended_at]
+      properties:
+        type:
+          type: string
+          const: workout
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        sport_type:
+          type: [string, 'null']
+        sport_type_label:
+          type: [string, 'null']
+        duration_sec:
+          type: [integer, 'null']
+          minimum: 0
+        distance_m:
+          type: [number, 'null']
+        active_kcal:
+          type: [number, 'null']
+        avg_hr_bpm:
+          type: [integer, 'null']
+        max_hr_bpm:
+          type: [integer, 'null']
+        vendor_sid:
+          type: [string, 'null']
+
+    IngestBatchResponse:
+      type: object
+      required: [sync_run_id, accepted, upserted, unchanged, rejected]
+      properties:
+        sync_run_id:
+          type: string
+          format: uuid
+        accepted:
+          type: integer
+        upserted:
+          type: integer
+        unchanged:
+          type: integer
+        rejected:
+          type: array
+          items:
+            type: object
+            required: [index, reason]
+            properties:
+              index:
+                type: integer
+              reason:
+                type: string
+
+    SyncRun:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+        status:
+          type: string
+          enum: [running, ok, partial, failed]
+        rows_upserted:
+          type: integer
+        error_code:
+          type: [string, 'null']
+          enum:
+            - auth_expired
+            - pass_token_invalid
+            - upstream_5xx
+            - upstream_timeout
+            - parse_error
+            - rate_limited
+            - incomplete_page
+            - unknown
+            - null
+        meta:
+          type: object
+          additionalProperties: true
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+
+  examples:
+    FullBatchExample:
+      summary: Dry-run fixture — all four types (synthetic, no real account data)
+      value:
+        schema_version: '0.2'
+        source: mi_health
+        vendor_sid: sid-mock-001
+        sync_run_id: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+        observed_at: '2026-10-28T06:31:00+08:00'
+        records:
+          - type: daily_summary
+            day: '2026-10-27'
+            started_at: '2026-10-27T00:00:00+08:00'
+            steps: 8432
+            distance_m: 5820.5
+            floors: null
+            active_kcal: 312
+            exercise_minutes: 28
+            stand_hours: 10
+            resting_hr_bpm: 58
+            hr_zone_minutes:
+              warm_up: 40
+              fat_burning: 25
+              aerobic: 12
+              anaerobic: 3
+              extreme: 0
+            sleep_score: 82
+          - type: hr_sample
+            started_at: '2026-10-27T14:20:00+08:00'
+            bpm: 76
+            sample_kind: null
+          - type: sleep_session
+            started_at: '2026-10-26T23:40:00+08:00'
+            ended_at: '2026-10-27T07:05:00+08:00'
+            score: 82
+            stages:
+              - stage: light
+                started_at: '2026-10-26T23:40:00+08:00'
+                ended_at: '2026-10-27T00:55:00+08:00'
+              - stage: deep
+                started_at: '2026-10-27T00:55:00+08:00'
+                ended_at: '2026-10-27T02:10:00+08:00'
+              - stage: rem
+                started_at: '2026-10-27T02:10:00+08:00'
+                ended_at: '2026-10-27T02:45:00+08:00'
+              - stage: awake
+                started_at: '2026-10-27T02:45:00+08:00'
+                ended_at: '2026-10-27T02:52:00+08:00'
+              - stage: light
+                started_at: '2026-10-27T02:52:00+08:00'
+                ended_at: '2026-10-27T07:05:00+08:00'
+          - type: workout
+            started_at: '2026-10-27T18:00:00+08:00'
+            ended_at: '2026-10-27T18:42:00+08:00'
+            sport_type: outdoor_running
+            sport_type_label: 户外跑步
+            duration_sec: 2520
+            distance_m: 5200
+            active_kcal: 380
+            avg_hr_bpm: 142
+            max_hr_bpm: 168
+            vendor_sid: sid-mock-001

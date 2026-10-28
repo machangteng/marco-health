@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 
 const ENV_PATH = resolve(process.cwd(), ".env");
 
+/** Names documented in .env.example. Credential values are never loaded from the file. */
+const FILE_KEYS = new Set(["DATABASE_URL", "XIAOMI_USER_ID", "XIAOMI_PASS_TOKEN", "XIAOMI_DEVICE_ID"]);
+
 export function parseEnvFile(text: string): { DATABASE_URL?: string } {
   const result: { DATABASE_URL?: string } = {};
   for (const raw of text.split(/\r?\n/)) {
@@ -10,12 +13,12 @@ export function parseEnvFile(text: string): { DATABASE_URL?: string } {
     if (line === "" || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
     if (eq === -1) {
-      throw new Error(`.env line is not KEY=VALUE: ${line}`);
+      throw new Error(".env line is not KEY=VALUE");
     }
     const key = line.slice(0, eq).trim();
-    if (key !== "DATABASE_URL") {
+    if (!FILE_KEYS.has(key)) {
       throw new Error(
-        `.env may only set DATABASE_URL (found ${key}). Keep vendor credentials outside this repository.`,
+        `.env may only set DATABASE_URL and blank Xiaomi placeholders (found ${key}). Keep vendor credentials in the process environment.`,
       );
     }
     let value = line.slice(eq + 1).trim();
@@ -24,6 +27,12 @@ export function parseEnvFile(text: string): { DATABASE_URL?: string } {
       (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
     ) {
       value = value.slice(1, -1);
+    }
+    if (key !== "DATABASE_URL") {
+      if (value !== "") {
+        throw new Error(`${key} must stay empty in .env. Export it in the process environment instead.`);
+      }
+      continue;
     }
     if (value === "") {
       throw new Error("DATABASE_URL in .env is empty.");

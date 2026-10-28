@@ -17,6 +17,8 @@
     "migrate:down": "tsx src/migrate.ts down",
     "migrate:status": "tsx src/migrate.ts status",
     "health": "tsx src/healthcheck.ts",
+    "pull:mock": "tsx src/cli/pull-mock.ts",
+    "pull:probe": "tsx src/cli/pull-probe.ts",
     "check": "tsc --noEmit && tsx --test src/*.test.ts"
   },
   "dependencies": {

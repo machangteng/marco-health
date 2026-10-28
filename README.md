@@ -2,7 +2,7 @@
 
 Local skeleton for Marco's health dashboard. The database is the locked FORGE-005 schema for 栈 X (`mi_health`, hlth.io.mi.com). `devices.source` is `mi_health`.
 
-This repository boots a small Node.js service that checks Postgres. The ingest puller and the FORGE-002 UI are later tickets.
+This repository boots a small Node.js service that checks Postgres and accepts stack X ingest batches. The FORGE-002 UI is a later ticket.
 
 ## Stack
 
@@ -46,6 +46,11 @@ npm run dev
 
 `schemaReady` on that payload is true after `npm run migrate`.
 
+- `POST /v1/ingest/batch` — schema 0.2 upsert. One bad record is rejected; the rest of the batch is kept.
+- `GET /v1/sync/runs/{sync_run_id}` — run status. The payload has no credentials.
+
+Wire name `hr_sample` is stored as `samples.record_type = heart_rate`. Idempotency is `UNIQUE (device_id, record_type, started_at)`. A newer `observed_at` overwrites. Day boundaries are `Asia/Shanghai`, and timestamps are stored with `+08:00`.
+
 ```bash
 npm run build
 npm start
@@ -77,24 +82,57 @@ docker compose up -d --wait
 npm run migrate
 ```
 
+## Ingest
+
+The contract is `docs/FORGE-003-path-f-contract.md` (v0.2). The HTTP shape is `openapi/ingest-v0.2.yaml`. A synthetic batch lives at `fixtures/mi_health/ingest-batch-0.2.json`.
+
+```bash
+npm run pull:mock
+```
+
+That reads `fixtures/mi_health/` and upserts through the same path as `POST /v1/ingest/batch`. It does not call Xiaomi.
+
+```bash
+npm run pull:probe
+```
+
+The live probe calls `account.xiaomi.com` (pass token exchange), `sts-hlth.io.mi.com`, and `hlth.io.mi.com` only. It does not call Huami or `api-mifit`. If `XIAOMI_USER_ID` or `XIAOMI_PASS_TOKEN` is missing, the command prints `{"skipped":true,...}` and exits 0. When they are present it uses a two-day window, waits at least one second between requests, renews the session at most once after HTTP 401, and records `auth_expired` or `pass_token_invalid` on `sync_runs`.
+
 ## Layout
 
 ```
 docker-compose.yml    Postgres 16
 db/migrations/         locked up/down SQL
+openapi/               ingest OpenAPI 0.2
+fixtures/mi_health/    mock puller batches
+docs/                  path F contract v0.2
 src/index.ts           HTTP server
 src/health.ts          database health check
 src/migrate.ts         migration runner
-.env.example           DATABASE_URL only
+src/ingest/            batch upsert
+src/pull/              mock puller and optional live probe
+.env.example           DATABASE_URL and blank Xiaomi placeholders
 ```
 
 ## Credentials
 
-Copy `.env.example` to `.env` for the local database URL. Keep Xiaomi account material in a vault or a runtime environment outside this repository. `.env` is gitignored. `.env.example` documents `DATABASE_URL` only.
+Copy `.env.example` to `.env` for the local database URL, or export `DATABASE_URL`. `.env` is gitignored. The loader accepts blank `XIAOMI_*` placeholders and refuses non-empty credential values in that file.
+
+Export these in the process environment only when you intend to run the live probe:
+
+- `XIAOMI_USER_ID`
+- `XIAOMI_PASS_TOKEN`
+- `XIAOMI_DEVICE_ID` (optional login device id)
+
+Do not commit those values. Logs redact them.
 
 ## Checks
 
+`npm test` includes the Postgres integration tests, so the Compose database has to be up and migrated.
+
 ```bash
+docker compose up -d --wait
+npm run migrate
 npm test
 npm run typecheck
 ```
