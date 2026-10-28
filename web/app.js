@@ -142,13 +142,6 @@
     });
   }
 
-  function tickStatusTime() {
-    const el = $("#status-time");
-    if (!el) return;
-    const now = new Date();
-    el.textContent = now.getHours().toString().padStart(2, "0") + ":" + now.getMinutes().toString().padStart(2, "0");
-  }
-
   function currentRange() {
     const active = $(".seg-btn.is-active");
     return active && active.dataset.range === "month" ? "month" : "week";
@@ -718,8 +711,6 @@
 
   function init() {
     bindTheme();
-    tickStatusTime();
-    setInterval(tickStatusTime, 30000);
     bindTabs();
     bindRange();
     loadAndPaint().catch(() => {

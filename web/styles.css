@@ -42,7 +42,6 @@
   --desktop-bg: #0a0a0c;
   --phone-bezel: #1a1a1c;
   --phone-bezel-outer: #2a2a2e;
-  --status-fg: #ffffff;
   --chart-label: rgba(235, 235, 245, 0.45);
   --theme-toggle-bg: rgba(255, 255, 255, 0.08);
   --theme-toggle-border: rgba(255, 255, 255, 0.12);
@@ -114,7 +113,6 @@
   --desktop-bg: #e8e8ed;
   --phone-bezel: #d1d1d6;
   --phone-bezel-outer: #c7c7cc;
-  --status-fg: #1c1c1e;
   --chart-label: rgba(60, 60, 67, 0.5);
   --theme-toggle-bg: rgba(0, 0, 0, 0.05);
   --theme-toggle-border: rgba(0, 0, 0, 0.08);
@@ -192,86 +190,7 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.phone-notch {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 120px;
-  height: 28px;
-  background: #000;
-  border-radius: 20px;
-  z-index: 20;
-  pointer-events: none;
-}
-[data-theme="light"] .phone-notch {
-  background: #1c1c1e;
-}
-
-.phone-status {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 28px 0;
-  height: 48px;
-  font-size: 14px;
-  font-weight: 600;
-  flex-shrink: 0;
-  z-index: 10;
-  color: var(--status-fg);
-}
-.status-icons { display: flex; gap: 5px; align-items: center; }
-.sig, .wifi, .bat {
-  display: inline-block;
-  background: var(--status-fg);
-  border-radius: 1px;
-}
-.sig {
-  width: 16px; height: 10px;
-  clip-path: polygon(0 70%, 20% 70%, 20% 40%, 40% 40%, 40% 20%, 60% 20%, 60% 0, 80% 0, 80% 100%, 0 100%);
-  background: var(--status-fg);
-  opacity: 0.95;
-}
-.wifi {
-  width: 14px; height: 10px;
-  border: 2px solid var(--status-fg);
-  border-color: var(--status-fg) transparent transparent transparent;
-  border-radius: 50%;
-  background: transparent;
-  position: relative;
-}
-.wifi::after {
-  content: "";
-  position: absolute;
-  bottom: -2px; left: 50%;
-  transform: translateX(-50%);
-  width: 3px; height: 3px;
-  background: var(--status-fg);
-  border-radius: 50%;
-}
-.bat {
-  width: 22px; height: 10px;
-  border: 1.5px solid var(--status-fg);
-  border-radius: 3px;
-  background: transparent;
-  position: relative;
-}
-.bat::before {
-  content: "";
-  position: absolute;
-  inset: 1.5px 6px 1.5px 1.5px;
-  background: #30d158;
-  border-radius: 1px;
-}
-.bat::after {
-  content: "";
-  position: absolute;
-  right: -4px; top: 2px;
-  width: 2px; height: 4px;
-  background: var(--status-fg);
-  border-radius: 0 1px 1px 0;
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* —— App scroll area —— */
@@ -280,7 +199,7 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  padding: 4px 16px var(--content-bottom-pad);
+  padding: 12px 16px var(--content-bottom-pad);
   padding-bottom: max(var(--content-bottom-pad), calc(var(--tab-h) + env(safe-area-inset-bottom, 0px) + 28px));
   scroll-behavior: smooth;
   outline: none;
@@ -896,7 +815,6 @@ button:focus:not(:focus-visible) { outline: none; }
     border-radius: 0;
     box-shadow: none;
   }
-  .phone-notch { display: none; }
   .desktop-backdrop { display: none; }
 }
 

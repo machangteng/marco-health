@@ -56,6 +56,6 @@ web/
 
 ## 设计分辨率
 
-外框约 **390×844**（iPhone 14 量级），居中于桌面背景。窄屏（≤420px）时取消外框，全屏展示。内容区底部留白避开固定 Tab bar（含 safe-area）。
+外框约 **390×844**（iPhone 14 量级），居中于桌面背景。窄屏（≤420px）时取消外框，全屏展示。顶部不再画模拟时钟和信号图标，内容区用 `env(safe-area-inset-top)` 避开系统刘海；底部留白避开固定 Tab bar（含 safe-area）。
 
 总消耗没有入库列，界面显示为「—」。`floors` 为空时隐藏爬升。分时步数仅在 `samples.record_type = steps_minute` 有点时绘制。
