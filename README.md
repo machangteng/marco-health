@@ -164,9 +164,11 @@ After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for that Shanghai
 
 ### GitHub Actions
 
-`.github/workflows/daily-live-pull.yml` runs `npm run pull:live` on a schedule and on `workflow_dispatch`. The cron is `30 22 * * *` UTC, which is 06:30 Asia/Shanghai. The job is pull then ingest only. A failing step stops the job. It does not load `fixtures/mi_health/`.
+`.github/workflows/daily-live-pull.yml` runs `npm run migrate`, then `npm run pull:live`, on a schedule and on `workflow_dispatch`. The cron is `30 22 * * *` UTC, which is 06:30 Asia/Shanghai. A failing step stops the job, so a failed migrate does not start the pull. The workflow does not run `npm run pull:mock` and does not load `fixtures/mi_health/`.
 
-Create these Actions secrets. Put the values in GitHub only (Settings → Secrets and variables → Actions).
+`npm run migrate` is idempotent. Applied versions are stored in `schema_migrations`. A second run on a database that already has the locked schema prints `schema up to date` and changes nothing.
+
+Create these Actions secrets. Put the values in GitHub only (Settings → Secrets and variables → Actions). Secret names only belong in this repo.
 
 | Secret | Required | Purpose |
 | --- | --- | --- |
@@ -178,6 +180,23 @@ Create these Actions secrets. Put the values in GitHub only (Settings → Secret
 `serviceToken` and `ssecurity` are STS session fields. The puller obtains them at runtime from `account.xiaomi.com` and `sts-hlth.io.mi.com`. They are not Actions secrets and must not be committed.
 
 Logs redact credential values. A failed run prints `live pull failed: <error_code>`.
+
+#### Neon Free
+
+Neon Free is the public Postgres for that `DATABASE_URL` secret. A new Neon project is empty, so the workflow applies `db/migrations/` before the live pull.
+
+1. Sign up at [neon.tech](https://neon.tech) and create a project on the Free plan.
+2. Open **Connect** on that project. Turn connection pooling off and copy the connection URI. The host should be the direct endpoint (no `-pooler`). Migrate takes a session advisory lock, which the pooled endpoint does not keep. Leave the URI in the Neon UI only.
+3. In this repository: **Settings → Secrets and variables → Actions → New repository secret**. Name the secret `DATABASE_URL` and paste the URI as the value.
+4. On the same page, confirm `XIAOMI_USER_ID` and `XIAOMI_PASS_TOKEN` are set. `XIAOMI_DEVICE_ID` stays optional.
+
+Do not commit the URI. Do not add `serviceToken` or `ssecurity` as secrets.
+
+#### One-shot verify
+
+On GitHub: **Actions → daily-live-pull → Run workflow**. Choose the branch that contains this workflow and run it.
+
+That dispatch applies pending migrations, then pulls the Asia/Shanghai today window. If migrate fails, `pull:live` does not run. A failed pull does not replace stored rows with fixture data. After a successful run, `GET /v1/read/today` for that Shanghai day returns `source` `"db"`.
 
 ## Credentials
 
