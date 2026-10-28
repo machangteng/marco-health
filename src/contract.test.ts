@@ -12,6 +12,10 @@ import {
   isStackXUrl,
   livePullExitCode,
   livePullSummary,
+  PROBE_PAGE_LIMITS,
+  PROBE_WINDOW_DAYS,
+  probeWindow,
+  probeWindowDays,
   publicProbeView,
   readXiaomiCredentials,
   runLiveProbe,
@@ -177,7 +181,8 @@ test("live probe pulls a short window, spaces calls, and hides credentials", asy
     onHealth(url, params) {
       healthCalls += 1;
       const span = Number(params.end_time) - Number(params.start_time);
-      assert.ok(span > 0 && span <= 3 * 86_400);
+      assert.ok(span >= 6 * 86_400 && span <= 7 * 86_400);
+      assert.equal(params.limit, PROBE_WINDOW_DAYS);
       if (params.key === "steps") {
         return page([{ key: "steps", time: params.start_time, value: JSON.stringify({ steps: 100, distance: 10, calories: 999 }) }]);
       }
@@ -216,7 +221,7 @@ test("live probe pulls a short window, spaces calls, and hides credentials", asy
   if (result.skipped) return;
   assert.equal(result.status, "ok");
   assert.equal(result.error_code, null);
-  assert.equal(result.window.from, "2026-10-27");
+  assert.equal(result.window.from, "2026-10-22");
   assert.equal(result.window.to, "2026-10-28");
   assert.equal(healthCalls, 2);
   assert.deepEqual([...new Set(hosts)].sort(), ["account.xiaomi.com", "hlth.io.mi.com", "sts-hlth.io.mi.com"]);
@@ -691,4 +696,135 @@ test("daily workflow names Actions secrets and does not load fixtures", () => {
   assert.match(readme, /security_status/);
   assert.match(readme, /安全验证/);
   assert.match(readme, /has_service_token/);
+  assert.match(readme, /7 Asia\/Shanghai calendar days/);
+  assert.match(readme, /was 2/);
+  assert.match(readme, /XIAOMI_PULL_WINDOW_DAYS/);
+  assert.match(readme, /status is `partial`/);
+  assert.match(readme, /Run workflow/);
+});
+
+test("pull window is seven Shanghai days and will not exceed a week", () => {
+  assert.equal(PROBE_WINDOW_DAYS, 7);
+  assert.equal(probeWindowDays({}), 7);
+  assert.equal(probeWindowDays({ XIAOMI_PULL_WINDOW_DAYS: "" }), 7);
+  assert.equal(probeWindowDays({ XIAOMI_PULL_WINDOW_DAYS: "2" }), 2);
+  assert.equal(probeWindowDays({ XIAOMI_PULL_WINDOW_DAYS: "30" }), 7);
+  assert.equal(probeWindowDays({ XIAOMI_PULL_WINDOW_DAYS: "0" }), 7);
+  assert.equal(probeWindowDays({ XIAOMI_PULL_WINDOW_DAYS: "nope" }), 7);
+  const week = probeWindow(NOW);
+  assert.equal(week.from, "2026-10-22");
+  assert.equal(week.to, "2026-10-28");
+  assert.equal(week.hrStartSec, week.startSec - 86_400);
+  const clamped = probeWindow(NOW, probeWindowDays({ XIAOMI_PULL_WINDOW_DAYS: "30" }));
+  assert.equal(clamped.from, week.from);
+  const narrowed = probeWindow(NOW, 2);
+  assert.equal(narrowed.from, "2026-10-27");
+  assert.equal(narrowed.to, "2026-10-28");
+  assert.equal(narrowed.hrStartSec, narrowed.startSec - 86_400);
+});
+
+test("XIAOMI_PULL_WINDOW_DAYS narrows the live pull and its daily limit", async () => {
+  const seen: Array<{ limit: unknown; start: unknown }> = [];
+  const result = await runLiveProbe({
+    env: { XIAOMI_USER_ID: "10001", XIAOMI_PASS_TOKEN: PASS, XIAOMI_PULL_WINDOW_DAYS: "2" },
+    transport: scriptedTransport({
+      onHealth(_url, params) {
+        seen.push({ limit: params.limit, start: params.start_time });
+        return page([]);
+      },
+    }),
+    sleep: async () => undefined,
+    now: () => NOW,
+    random: () => 0,
+    dailyKeys: ["steps"],
+    includeHeartSamples: false,
+    includeSleep: false,
+    includeSport: false,
+  });
+  assert.equal(result.skipped, false);
+  if (result.skipped) return;
+  assert.equal(result.window.from, "2026-10-27");
+  assert.equal(result.window.to, "2026-10-28");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.limit, 2);
+  const span = Math.floor(NOW.getTime() / 1000) - Number(seen[0]?.start);
+  assert.ok(span > 86_400 && span <= 2 * 86_400);
+});
+
+test("heart and sleep start one day before the seven-day window", async () => {
+  const calls: Array<{ path: string; params: Record<string, unknown> }> = [];
+  const result = await runLiveProbe({
+    env: { XIAOMI_USER_ID: "10001", XIAOMI_PASS_TOKEN: PASS, XIAOMI_PULL_WINDOW_DAYS: "7" },
+    transport: scriptedTransport({
+      onHealth(url, params) {
+        calls.push({ path: new URL(url).pathname, params });
+        return page([]);
+      },
+    }),
+    sleep: async () => undefined,
+    now: () => NOW,
+    random: () => 0,
+    dailyKeys: ["steps"],
+  });
+  assert.equal(result.skipped, false);
+  if (result.skipped) return;
+  assert.equal(result.status, "ok");
+  assert.equal(result.window.from, "2026-10-22");
+  const steps = calls.find((call) => call.params.key === "steps");
+  const heart = calls.find((call) => call.params.key === "heart_rate");
+  const sleep = calls.find((call) => call.params.key === "sleep");
+  const sport = calls.find((call) => call.path.endsWith("/get_sport_records_by_time"));
+  assert.ok(steps && heart && sleep && sport);
+  assert.equal(Number(steps.params.limit), 7);
+  assert.equal(Number(heart.params.start_time), Number(steps.params.start_time) - 86_400);
+  assert.equal(Number(heart.params.limit), PROBE_PAGE_LIMITS.heartLimit);
+  assert.equal(Number(sleep.params.start_time), Number(heart.params.start_time));
+  assert.equal(Number(sleep.params.limit), PROBE_PAGE_LIMITS.sleepLimit);
+  assert.equal(Number(sport.params.start_time), Number(steps.params.start_time));
+  assert.equal(Number(sport.params.limit), PROBE_PAGE_LIMITS.sportLimit);
+  const dailySpan = Number(steps.params.end_time) - Number(steps.params.start_time);
+  const heartSpan = Number(heart.params.end_time) - Number(heart.params.start_time);
+  assert.ok(dailySpan >= 6 * 86_400 && dailySpan <= 7 * 86_400);
+  assert.ok(heartSpan > 7 * 86_400 && heartSpan <= 8 * 86_400);
+});
+
+test("a list that still has pages after the cap is partial", async () => {
+  let healthCalls = 0;
+  const dayStart = Math.floor(new Date("2026-10-28T00:00:00+08:00").getTime() / 1000);
+  const result = await runLiveProbe({
+    env: { XIAOMI_USER_ID: "10001", XIAOMI_PASS_TOKEN: PASS },
+    transport: scriptedTransport({
+      onHealth() {
+        healthCalls += 1;
+        return {
+          status: 200,
+          headers: {},
+          body: "",
+          plain: {
+            code: 0,
+            result: {
+              data_list: [{ key: "steps", time: dayStart, value: JSON.stringify({ steps: 1, distance: 1 }) }],
+              has_more: true,
+              next_key: `k${healthCalls}`,
+            },
+          },
+        };
+      },
+    }),
+    sleep: async () => undefined,
+    now: () => NOW,
+    random: () => 0,
+    dailyKeys: ["steps"],
+    includeHeartSamples: false,
+    includeSleep: false,
+    includeSport: false,
+  });
+  assert.equal(result.skipped, false);
+  if (result.skipped) return;
+  assert.equal(result.status, "partial");
+  assert.equal(result.error_code, null);
+  assert.equal(healthCalls, PROBE_PAGE_LIMITS.dailyMaxPages);
+  assert.equal(result.records.length > 0, true);
+  assert.equal(livePullExitCode(result), 0);
+  assert.equal(livePullSummary(result).status, "partial");
 });
