@@ -1,6 +1,7 @@
 # Daily stack X pull. Schedule is 06:30 Asia/Shanghai (22:30 UTC). No DST in that zone.
-# The job applies pending migrations, then runs pull and ingest.
-# A failed step stops the job. Fixture batches are not part of this job.
+# The job applies pending migrations, pulls and ingests, then checks Asia/Shanghai
+# today has daily_aggregates in Postgres. A failed step stops the job.
+# Fixture batches are not part of this job.
 name: daily-live-pull
 
 on:
@@ -46,3 +47,8 @@ jobs:
           XIAOMI_PASS_TOKEN: ${{ secrets.XIAOMI_PASS_TOKEN }}
           XIAOMI_DEVICE_ID: ${{ secrets.XIAOMI_DEVICE_ID }}
         run: npm run pull:live
+
+      - name: Verify Shanghai today in Postgres
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run verify:live

@@ -20,6 +20,7 @@
     "pull:mock": "tsx src/cli/pull-mock.ts",
     "pull:probe": "tsx src/cli/pull-probe.ts",
     "pull:live": "tsx src/cli/pull-probe.ts",
+    "verify:live": "tsx src/cli/verify-live-pull.ts",
     "check": "tsc --noEmit && tsx --test src/*.test.ts"
   },
   "dependencies": {

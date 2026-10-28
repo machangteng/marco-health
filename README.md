@@ -148,6 +148,7 @@ src/migrate.ts         migration runner
 src/ingest/            batch upsert
 src/read/              today and trend reads
 src/pull/              mock puller and stack X live pull
+src/verify/            Shanghai-day check after the live pull
 .github/workflows/     daily live pull (schedule + workflow_dispatch)
 .env.example           DATABASE_URL and blank Xiaomi placeholders
 ```
@@ -168,9 +169,17 @@ After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for that Shanghai
 
 ### GitHub Actions
 
-`.github/workflows/daily-live-pull.yml` runs `npm run migrate`, then `npm run pull:live`, on a schedule and on `workflow_dispatch`. The cron is `30 22 * * *` UTC, which is 06:30 Asia/Shanghai. A failing step stops the job, so a failed migrate does not start the pull. The workflow does not run `npm run pull:mock` and does not load `fixtures/mi_health/`.
+`.github/workflows/daily-live-pull.yml` runs `npm run migrate`, then `npm run pull:live`, then `npm run verify:live`, on a schedule and on `workflow_dispatch`. The cron is `30 22 * * *` UTC, which is 06:30 Asia/Shanghai. A failing step stops the job, so a failed migrate does not start the pull, and a failed pull does not start the verify. The workflow does not run `npm run pull:mock` and does not load `fixtures/mi_health/`.
 
 `npm run migrate` is idempotent. Applied versions are stored in `schema_migrations`. A second run on a database that already has the locked schema prints `schema up to date` and changes nothing.
+
+`npm run verify:live` queries Postgres with the `DATABASE_URL` secret. It counts `daily_aggregates` rows (`record_type = daily_summary`) and `samples` rows for Asia/Shanghai today, the last day of the pull window (that day and the previous day). `source` is `db` when that day has at least one `daily_aggregates` row, the same rule as `GET /v1/read/today`. Zero rows fail the step, because a read of that day would use `source` `fixture`. The job summary line is counts only:
+
+```
+verify ok: day=YYYY-MM-DD aggregates=N samples=M source=db
+```
+
+A failing check writes `verify failed: day=YYYY-MM-DD aggregates=0 samples=M source=fixture` and exits 1. `N` and `M` are row counts. The line has no database URI, token, or cookie.
 
 Create these Actions secrets. Put the values in GitHub only (Settings → Secrets and variables → Actions). Secret names only belong in this repo.
 
@@ -200,7 +209,7 @@ Do not commit the URI. Do not add `serviceToken` or `ssecurity` as secrets.
 
 On GitHub: **Actions → daily-live-pull → Run workflow**. Choose the branch that contains this workflow and run it.
 
-That dispatch applies pending migrations, then pulls the Asia/Shanghai today window. If migrate fails, `pull:live` does not run. A failed pull does not replace stored rows with fixture data. After a successful run, `GET /v1/read/today` for that Shanghai day returns `source` `"db"`.
+That dispatch applies pending migrations, pulls the Asia/Shanghai today window, then verifies that day in Postgres. If migrate fails, `pull:live` does not run. If the pull fails, verify does not run. A failed pull does not replace stored rows with fixture data. The job summary shows `verify ok: day=YYYY-MM-DD aggregates=N samples=M source=db` when that Shanghai day has `daily_aggregates` rows.
 
 ## Credentials
 
