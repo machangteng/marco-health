@@ -1,5 +1,6 @@
 # Daily stack X pull. Schedule is 06:30 Asia/Shanghai (22:30 UTC). No DST in that zone.
-# The job runs pull then ingest. A failure stops the job.
+# The job applies pending migrations, then runs pull and ingest.
+# A failed step stops the job. Fixture batches are not part of this job.
 name: daily-live-pull
 
 on:
@@ -32,6 +33,11 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Apply schema
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run migrate
 
       - name: Pull Shanghai today and ingest
         env:

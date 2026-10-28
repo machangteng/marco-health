@@ -363,7 +363,7 @@ test("daily workflow names Actions secrets and does not load fixtures", () => {
   const cli = readFileSync(new URL("./cli/pull-probe.ts", import.meta.url), "utf8");
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /cron:\s*"30 22 \* \* \*"/);
-  assert.match(workflow, /npm run pull:live/);
+  assert.match(workflow, /npm run migrate[\s\S]*npm run pull:live/);
   assert.equal(workflow.includes("pull:mock"), false);
   assert.equal(workflow.includes("fixtures/"), false);
   assert.equal(workflow.includes("postgres://"), false);
