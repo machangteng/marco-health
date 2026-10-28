@@ -169,9 +169,14 @@ export function fetchTransport(timeoutMs = 15_000): ProbeTransport {
       signal: AbortSignal.timeout(timeoutMs),
     });
     const setCookie = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
+    const headers: Record<string, string | string[]> = {};
+    if (setCookie.length > 0) headers["set-cookie"] = setCookie;
+    // Nonce can live here when the JSON field is absent. The value is a secret and is not logged.
+    const pragma = response.headers.get("extension-pragma");
+    if (pragma !== null && pragma !== "") headers["extension-pragma"] = pragma;
     return {
       status: response.status,
-      headers: setCookie.length > 0 ? { "set-cookie": setCookie } : {},
+      headers,
       body: await response.text(),
     };
   };
@@ -182,6 +187,7 @@ export function fetchTransport(timeoutMs = 15_000): ProbeTransport {
  * The daily CLI treats that result as a failure. It is not a successful skip.
  * A 401 on the health host renews the STS session once, then stops as auth_expired.
  * serviceLogin and STS failures add safe diagnostic fields to the summary.
+ * A login nonce is taken from the JSON body (string or integer) or, when that field is empty, from Extension-Pragma.
  * Requests wait 1-2s with jitter. passToken is sent only to account.xiaomi.com.
  * Data calls stay on hlth.io.mi.com.
  */
@@ -339,7 +345,7 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
     if (response.status >= 500) throw new ProbeFailure("upstream_5xx", response.status);
     if (response.status === 401) throw new ProbeFailure("auth_expired", 401);
     if (response.status !== 200) throw new ProbeFailure("unknown", response.status);
-    const payload = parseLogin(response.body);
+    const payload = parseLogin(response.body, response.headers);
     const loginDiagnostics = diagnosticsFor(payload, false);
     if (payload.code === 70016) throw new ProbeFailure("pass_token_invalid", 200, loginDiagnostics);
     if (payload.securityStatus !== 0) throw new ProbeFailure("auth_expired", 200, loginDiagnostics);
@@ -479,7 +485,7 @@ function healthCookie(session: Session): string {
   return pairs.join("; ");
 }
 
-function parseLogin(body: string): ParsedLogin {
+function parseLogin(body: string, headers: ProbeResponse["headers"] = {}): ParsedLogin {
   const text = body.startsWith("&&&START&&&") ? body.slice("&&&START&&&".length) : body;
   let parsed: unknown;
   try {
@@ -494,11 +500,52 @@ function parseLogin(body: string): ParsedLogin {
     codeReported,
     securityStatus: object.securityStatus === undefined ? 0 : asCode(object.securityStatus),
     securityStatusReported: object.securityStatus === undefined ? null : finiteNumber(object.securityStatus),
-    nonce: typeof object.nonce === "string" ? object.nonce : "",
+    nonce: loginNonce(text, object, headers),
     ssecurity: typeof object.ssecurity === "string" ? object.ssecurity : "",
     location: typeof object.location === "string" ? object.location : "",
     cUserId: typeof object.cUserId === "string" ? object.cUserId : "",
   };
+}
+
+/**
+ * STS nonce. Xiaomi sends a JSON integer (a Long) or, when that field is empty, the same key
+ * on the Extension-Pragma header. Digits are read from the raw text so values above 2^53 stay exact.
+ * A nonce query parameter on location is not this value.
+ */
+function loginNonce(rawBody: string, object: Record<string, unknown>, headers: ProbeResponse["headers"]): string {
+  const fromBody = nonceValue(rawBody, object);
+  if (fromBody !== "") return fromBody;
+  const rawPragma = headerValue(headers, "extension-pragma");
+  if (rawPragma === "") return "";
+  try {
+    return nonceValue(rawPragma, asObject(JSON.parse(rawPragma) as unknown));
+  } catch {
+    return "";
+  }
+}
+
+function nonceValue(raw: string, object: Record<string, unknown>): string {
+  const value = object.nonce;
+  if (typeof value === "string" && value.trim() !== "") return value.trim();
+  const digits = rawIntegerField(raw, "nonce");
+  if (digits !== "") return digits;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  return "";
+}
+
+function rawIntegerField(raw: string, field: string): string {
+  const match = new RegExp(`"${field}"\\s*:\\s*(-?\\d+)(?![\\d.])`).exec(raw);
+  return match?.[1] ?? "";
+}
+
+function headerValue(headers: ProbeResponse["headers"], name: string): string {
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== wanted) continue;
+    if (Array.isArray(value)) return value.find((item) => item.trim() !== "") ?? "";
+    return typeof value === "string" ? value : "";
+  }
+  return "";
 }
 
 function diagnosticsFor(payload: ParsedLogin, hasServiceToken: boolean): AuthDiagnostics {

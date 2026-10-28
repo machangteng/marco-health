@@ -7,6 +7,7 @@ import { normalizeDailyReports, normalizeHeartSamples } from "./pull/normalize.j
 import {
   accountExternalId,
   authDiagnosticsLine,
+  fetchTransport,
   interRequestDelayMs,
   isStackXUrl,
   livePullExitCode,
@@ -440,7 +441,7 @@ test("serviceLogin failures expose safe auth diagnostics", async () => {
     },
     {
       name: "missing nonce",
-      response: loginResponse(0, location, { omit: ["nonce"] }),
+      response: loginResponse(0, `${location}&nonce=999888777666`, { omit: ["nonce"] }),
       error_code: "auth_expired",
       login_code: 0,
       security_status: 0,
@@ -557,6 +558,115 @@ test("serviceLogin failures expose safe auth diagnostics", async () => {
     assert.equal(summary.has_location, true);
     assert.equal(summary.has_service_token, false);
     assert.equal(JSON.stringify(summary).includes("fixture-query-secret"), false);
+  }
+});
+
+test("serviceLogin accepts a nonce that is not a top-level string", async () => {
+  const nonce = "9876543210987654321";
+  const location = "https://sts-hlth.io.mi.com/healthapp/sts?sid=miothealth";
+  const fields = {
+    code: 0,
+    securityStatus: 0,
+    ssecurity: SSECURITY,
+    location,
+    cUserId: "c-fixture",
+  };
+  const cases: Array<{ name: string; response: ProbeResponse }> = [
+    {
+      name: "nonce only on Extension-Pragma",
+      response: {
+        status: 200,
+        headers: { "Extension-Pragma": `{"nonce":${nonce}}` },
+        body: "&&&START&&&" + JSON.stringify(fields),
+      },
+    },
+    {
+      name: "empty JSON nonce with Extension-Pragma",
+      response: {
+        status: 200,
+        headers: { "extension-pragma": `{"ssecurity":"ignored","nonce":"${nonce}"}` },
+        body: "&&&START&&&" + JSON.stringify({ ...fields, nonce: "" }),
+      },
+    },
+    {
+      name: "integer nonce in the JSON body",
+      response: {
+        status: 200,
+        headers: {},
+        body:
+          "&&&START&&&" +
+          `{"code":0,"securityStatus":0,"nonce":${nonce},"ssecurity":${JSON.stringify(SSECURITY)},"location":${JSON.stringify(location)},"cUserId":"c-fixture"}`,
+      },
+    },
+  ];
+
+  for (const item of cases) {
+    const logs: string[] = [];
+    const hosts: string[] = [];
+    let stsUrl = "";
+    let healthCookie = "";
+    const inner = scriptedTransport({
+      onLogin: () => item.response,
+      onHealth: () => page([]),
+    });
+    const result = await runLiveProbe({
+      env: { XIAOMI_USER_ID: "10001", XIAOMI_PASS_TOKEN: PASS, XIAOMI_DEVICE_ID: "ABCDEF0123456789" },
+      transport: async (request) => {
+        const url = new URL(request.url);
+        hosts.push(url.host);
+        if (url.host === "sts-hlth.io.mi.com") stsUrl = request.url;
+        if (url.host === "hlth.io.mi.com") healthCookie = request.headers.cookie ?? "";
+        return inner(request);
+      },
+      sleep: async () => undefined,
+      now: () => NOW,
+      random: () => 0,
+      log: (line) => logs.push(line),
+      dailyKeys: ["steps"],
+      includeHeartSamples: false,
+      includeSleep: false,
+      includeSport: false,
+    });
+    assert.equal(result.skipped, false, item.name);
+    if (result.skipped) continue;
+    assert.equal(result.status, "ok", item.name);
+    assert.equal(result.error_code, null, item.name);
+    assert.equal(result.auth_diagnostics, undefined, item.name);
+    assert.equal(hosts.includes("sts-hlth.io.mi.com"), true, item.name);
+    assert.equal(hosts.includes("hlth.io.mi.com"), true, item.name);
+    const signed = new URL(stsUrl);
+    assert.equal(signed.searchParams.get("clientSign"), clientSign(nonce, SSECURITY), item.name);
+    assert.match(healthCookie, new RegExp(`(?:^|; )serviceToken=${SERVICE}(?:;|$)`), item.name);
+    const encoded = `${JSON.stringify(livePullSummary(result))}\n${logs.join("\n")}`;
+    for (const secret of [PASS, SSECURITY, SERVICE, nonce, "Extension-Pragma"]) {
+      assert.equal(encoded.includes(secret), false, `${item.name} leaked`);
+    }
+    assert.equal(logs.some((line) => line.includes("?")), false, item.name);
+  }
+});
+
+test("fetchTransport forwards Extension-Pragma and no other headers", async () => {
+  const original = globalThis.fetch;
+  const pragma = '{"nonce":1}';
+  globalThis.fetch = async () =>
+    new Response("{}", {
+      status: 200,
+      headers: {
+        "extension-pragma": pragma,
+        "x-request-id": "not-a-login-field",
+      },
+    });
+  try {
+    const response = await fetchTransport()({
+      url: "https://account.xiaomi.com/pass/serviceLogin",
+      method: "GET",
+      headers: {},
+    });
+    assert.equal(response.headers["extension-pragma"], pragma);
+    assert.equal("x-request-id" in response.headers, false);
+    assert.equal(JSON.stringify(response.headers).includes("not-a-login-field"), false);
+  } finally {
+    globalThis.fetch = original;
   }
 });
 
