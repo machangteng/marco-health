@@ -35,6 +35,18 @@ export type SleepSessionRecord = {
   score: number | null;
   /** null when the payload omitted stages; an array replaces stored stages. */
   stages: SleepStageRecord[] | null;
+  /** Stage totals in minutes. Null when that Xiaomi field was absent. */
+  deep_min: number | null;
+  light_min: number | null;
+  rem_min: number | null;
+  awake_min: number | null;
+  awake_count: number | null;
+  /** sleep_efficiency when the row includes it. Known captures omit it. */
+  efficiency: number | null;
+  avg_hr_bpm: number | null;
+  min_hr_bpm: number | null;
+  max_hr_bpm: number | null;
+  avg_spo2: number | null;
 };
 
 export type WorkoutRecord = {

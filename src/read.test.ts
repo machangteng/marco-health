@@ -49,10 +49,36 @@ test("rings use active_kcal, exercise_minutes, and stand_hours from the daily ro
     if (sql.includes("read:sleep-session")) {
       return [
         {
+          id: "33333333-3333-4333-8333-333333333333",
+          started_at: new Date("2024-06-15T13:00:00+08:00"),
+          ended_at: new Date("2024-06-15T13:40:00+08:00"),
+          score: 40,
+          deep_min: 0,
+          light_min: 40,
+          rem_min: null,
+          awake_min: 0,
+          awake_count: 0,
+          efficiency: null,
+          avg_hr_bpm: null,
+          min_hr_bpm: null,
+          max_hr_bpm: null,
+          avg_spo2: null,
+        },
+        {
           id: "22222222-2222-4222-8222-222222222222",
           started_at: new Date("2024-06-14T23:10:00+08:00"),
           ended_at: new Date("2024-06-15T06:40:00+08:00"),
-          score: 77,
+          score: null,
+          deep_min: 90,
+          light_min: 210,
+          rem_min: 80,
+          awake_min: 15,
+          awake_count: 2,
+          efficiency: null,
+          avg_hr_bpm: 54,
+          min_hr_bpm: 46,
+          max_hr_bpm: 71,
+          avg_spo2: 97,
         },
       ];
     }
@@ -99,6 +125,18 @@ test("rings use active_kcal, exercise_minutes, and stand_hours from the daily ro
   assert.equal(body.heart_rate[0]?.value_num, 88);
   assert.equal(body.heart_rate[0]?.started_at, "2024-06-15T14:22:00+08:00");
   assert.equal(body.sleep?.stages[0]?.stage, "deep");
+  assert.equal(body.sleep?.started_at, "2024-06-14T23:10:00+08:00");
+  assert.equal(body.sleep?.score, 77);
+  assert.equal(body.sleep?.deep_min, 90);
+  assert.equal(body.sleep?.light_min, 210);
+  assert.equal(body.sleep?.rem_min, 80);
+  assert.equal(body.sleep?.awake_min, 15);
+  assert.equal(body.sleep?.awake_count, 2);
+  assert.equal(body.sleep?.efficiency, null);
+  assert.equal(body.sleep?.avg_hr_bpm, 54);
+  assert.equal(body.sleep?.min_hr_bpm, 46);
+  assert.equal(body.sleep?.max_hr_bpm, 71);
+  assert.equal(body.sleep?.avg_spo2, 97);
   assert.equal(body.workouts[0]?.title, "户外跑步");
   assert.equal(body.workouts[0]?.sport_type_label, "户外跑步");
   assert.equal(body.workouts[0]?.active_kcal, 250);
@@ -127,6 +165,14 @@ test("empty daily_aggregates falls back to the ingest fixture", async () => {
   assert.equal(today.heart_rate[0]?.value_num, 76);
   assert.equal(today.sleep?.score, 82);
   assert.equal(today.sleep?.stages.length, 5);
+  assert.equal(today.sleep?.deep_min, 75);
+  assert.equal(today.sleep?.light_min, 328);
+  assert.equal(today.sleep?.rem_min, 35);
+  assert.equal(today.sleep?.awake_min, 7);
+  assert.equal(today.sleep?.efficiency, null);
+  assert.equal(today.sleep?.awake_count, null);
+  assert.equal(today.sleep?.avg_hr_bpm, null);
+  assert.equal(today.sleep?.avg_spo2, null);
   assert.equal(today.workouts[0]?.sport_type, "outdoor_running");
   assert.equal(today.workouts[0]?.sport_type_label, "户外跑步");
   assert.equal(today.workouts[0]?.active_kcal, 380);

@@ -3,7 +3,15 @@ import type { ErrorCode } from "../error-codes.js";
 import type { IngestRecord } from "../ingest/types.js";
 import { maskSecrets } from "../mask.js";
 import { formatInShanghai, shiftShanghaiDay, shanghaiDay } from "../time.js";
-import { normalizeDailyReports, normalizeHeartSamples, normalizeSleepSessions, normalizeWorkouts, type UpstreamRow } from "./normalize.js";
+import {
+  mergeSleepSessions,
+  normalizeAggregatedSleepSessions,
+  normalizeDailyReports,
+  normalizeHeartSamples,
+  normalizeSleepSessions,
+  normalizeWorkouts,
+  type UpstreamRow,
+} from "./normalize.js";
 import { clientSign, openJson, sealParams } from "./xiaomi-crypto.js";
 
 /**
@@ -14,7 +22,7 @@ import { clientSign, openJson, sealParams } from "./xiaomi-crypto.js";
  */
 export const PROBE_WINDOW_DAYS = 7;
 export const MAX_PROBE_WINDOW_DAYS = 7;
-export const PROBE_DAILY_KEYS = ["steps", "calories", "intensity", "valid_stand", "heart_rate"] as const;
+export const PROBE_DAILY_KEYS = ["steps", "calories", "intensity", "valid_stand", "heart_rate", "sleep"] as const;
 
 /**
  * Page caps for one 7-day pull. Hitting a cap while `has_more` is still true
@@ -359,7 +367,7 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
     const records: IngestRecord[] = [
       ...normalizeDailyReports(dailyRows),
       ...normalizeHeartSamples(heartRows, window.startSec),
-      ...normalizeSleepSessions(sleepRows),
+      ...mergeSleepSessions(normalizeSleepSessions(sleepRows), normalizeAggregatedSleepSessions(dailyRows)),
       ...normalizeWorkouts(sportRows),
     ];
     return {

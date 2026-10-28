@@ -310,6 +310,37 @@ components:
           type: [integer, 'null']
           minimum: 0
           maximum: 100
+        deep_min:
+          type: [integer, 'null']
+          minimum: 0
+          description: sleep_deep_duration in minutes
+        light_min:
+          type: [integer, 'null']
+          minimum: 0
+        rem_min:
+          type: [integer, 'null']
+          minimum: 0
+        awake_min:
+          type: [integer, 'null']
+          minimum: 0
+        awake_count:
+          type: [integer, 'null']
+          minimum: 0
+        efficiency:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+          description: Present only when Xiaomi sent sleep_efficiency
+        avg_hr_bpm:
+          type: [integer, 'null']
+        min_hr_bpm:
+          type: [integer, 'null']
+        max_hr_bpm:
+          type: [integer, 'null']
+        avg_spo2:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100
         stages:
           type: array
           items:

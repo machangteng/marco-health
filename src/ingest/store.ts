@@ -184,20 +184,53 @@ export async function upsertSleep(
   const written = await queryRows<IdRow>(
     client,
     `INSERT INTO sleep_sessions (
-       device_id, record_type, started_at, ended_at, score, sync_run_id, observed_at
+       device_id, record_type, started_at, ended_at, score,
+       deep_min, light_min, rem_min, awake_min, awake_count,
+       efficiency, avg_hr_bpm, min_hr_bpm, max_hr_bpm, avg_spo2,
+       sync_run_id, observed_at
      ) VALUES (
-       $1::uuid, 'sleep_session', $2::timestamptz, $3::timestamptz, $4, $5::uuid, $6::timestamptz
+       $1::uuid, 'sleep_session', $2::timestamptz, $3::timestamptz, $4,
+       $5, $6, $7, $8, $9,
+       $10, $11, $12, $13, $14,
+       $15::uuid, $16::timestamptz
      )
      ON CONFLICT (device_id, record_type, started_at) DO UPDATE SET
        ended_at = EXCLUDED.ended_at,
        score = EXCLUDED.score,
+       deep_min = EXCLUDED.deep_min,
+       light_min = EXCLUDED.light_min,
+       rem_min = EXCLUDED.rem_min,
+       awake_min = EXCLUDED.awake_min,
+       awake_count = EXCLUDED.awake_count,
+       efficiency = EXCLUDED.efficiency,
+       avg_hr_bpm = EXCLUDED.avg_hr_bpm,
+       min_hr_bpm = EXCLUDED.min_hr_bpm,
+       max_hr_bpm = EXCLUDED.max_hr_bpm,
+       avg_spo2 = EXCLUDED.avg_spo2,
        sync_run_id = EXCLUDED.sync_run_id,
        observed_at = EXCLUDED.observed_at,
        ingested_at = now()
      WHERE sleep_sessions.observed_at IS NULL
         OR sleep_sessions.observed_at < EXCLUDED.observed_at
      RETURNING id::text AS id`,
-    [deviceId, record.started_at, record.ended_at, record.score, syncRunId, observedAt],
+    [
+      deviceId,
+      record.started_at,
+      record.ended_at,
+      record.score,
+      record.deep_min,
+      record.light_min,
+      record.rem_min,
+      record.awake_min,
+      record.awake_count,
+      record.efficiency,
+      record.avg_hr_bpm,
+      record.min_hr_bpm,
+      record.max_hr_bpm,
+      record.avg_spo2,
+      syncRunId,
+      observedAt,
+    ],
   );
   if (written.length === 0) return "unchanged";
   const sessionId = written[0]?.id;

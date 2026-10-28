@@ -123,24 +123,27 @@
         </article>
 
         <!-- 4. 睡眠 -->
-        <article class="card" aria-labelledby="sleep-heading">
+        <article class="card sleep-card" aria-labelledby="sleep-heading">
           <h2 id="sleep-heading" class="card-title">睡眠</h2>
-          <div class="stat-row">
-            <div class="stat-block">
-              <p class="stat-label">昨晚时长</p>
-              <p class="stat-value"><span id="sleep-duration">7</span><span class="stat-unit">小时</span>
-                <span id="sleep-mins" class="stat-value-sm">24</span><span class="stat-unit">分</span></p>
-              <p class="stat-sub" id="sleep-window">23:18 — 06:42</p>
-            </div>
-            <div class="stat-block">
+          <div class="sleep-head">
+            <div class="sleep-score-block">
               <p class="stat-label">睡眠评分</p>
-              <p class="stat-value accent-teal"><span id="sleep-score">86</span></p>
-              <p class="stat-sub" id="sleep-quality">优质</p>
+              <p class="sleep-score-value accent-teal"><span id="sleep-score">—</span></p>
+              <p class="stat-sub" id="sleep-quality">暂无</p>
+            </div>
+            <div class="sleep-duration-block">
+              <p class="stat-label">昨晚时长</p>
+              <p class="stat-value"><span id="sleep-duration">—</span><span class="stat-unit">小时</span>
+                <span id="sleep-mins" class="stat-value-sm">—</span><span class="stat-unit">分</span></p>
+              <p class="stat-sub" id="sleep-window">暂无睡眠</p>
             </div>
           </div>
-          <h3 class="subhead">睡眠阶段</h3>
-          <div class="sleep-stages" id="sleep-stages" role="img" aria-label="睡眠阶段图：深睡、浅睡、REM、清醒"></div>
-          <ul class="stage-legend" id="stage-legend"></ul>
+          <div class="sleep-stages-wrap" id="sleep-stages-wrap" hidden>
+            <h3 class="subhead" id="sleep-stages-label">睡眠阶段</h3>
+            <div class="sleep-stages" id="sleep-stages" role="img" aria-label="睡眠阶段"></div>
+            <ul class="stage-legend" id="stage-legend"></ul>
+          </div>
+          <ul class="sleep-meta" id="sleep-meta" hidden></ul>
         </article>
 
         <!-- 5. 卡路里 + 锻炼记录 -->
