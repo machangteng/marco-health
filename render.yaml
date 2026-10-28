@@ -1,0 +1,14 @@
+# HTTPS phone UI. Render prompts for DATABASE_URL (Neon direct URI, no -pooler).
+# Do not add XIAOMI_USER_ID, XIAOMI_PASS_TOKEN, or XIAOMI_DEVICE_ID.
+services:
+  - type: web
+    name: marco-health
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        sync: false
