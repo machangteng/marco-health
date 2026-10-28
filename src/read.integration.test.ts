@@ -63,8 +63,15 @@ describe("read API against postgres", { concurrency: 1 }, () => {
       [deviceId],
     );
     const sleep = await client.query<{ id: string }>(
-      `INSERT INTO sleep_sessions (device_id, record_type, started_at, ended_at, score)
-       VALUES ($1::uuid, 'sleep_session', '2024-06-14T23:10:00+08:00', '2024-06-15T06:40:00+08:00', 77)
+      `INSERT INTO sleep_sessions (
+         device_id, record_type, started_at, ended_at, score,
+         deep_min, light_min, rem_min, awake_min, awake_count,
+         efficiency, avg_hr_bpm, min_hr_bpm, max_hr_bpm, avg_spo2
+       ) VALUES (
+         $1::uuid, 'sleep_session', '2024-06-14T23:10:00+08:00', '2024-06-15T06:40:00+08:00', 77,
+         90, 210, 80, 15, 2,
+         NULL, 54, 46, 71, 97
+       )
        RETURNING id::text AS id`,
       [deviceId],
     );
@@ -102,7 +109,16 @@ describe("read API against postgres", { concurrency: 1 }, () => {
       };
       hr_zone_minutes: { warm_up: number };
       heart_rate: Array<{ bpm: number; value_num: number; started_at: string }>;
-      sleep: { stages: Array<{ stage: string }> };
+      sleep: {
+        score: number | null;
+        stages: Array<{ stage: string }>;
+        deep_min: number | null;
+        rem_min: number | null;
+        awake_count: number | null;
+        efficiency: number | null;
+        avg_hr_bpm: number | null;
+        avg_spo2: number | null;
+      };
       workouts: Array<{ sport_type: string; title: string; sport_type_label: string; active_kcal: number }>;
     };
     assert.equal(body.source, "db");
@@ -122,6 +138,25 @@ describe("read API against postgres", { concurrency: 1 }, () => {
     assert.equal(body.heart_rate[0]?.value_num, 88);
     assert.equal(body.heart_rate[0]?.started_at, "2024-06-15T14:22:00+08:00");
     assert.equal(body.sleep.stages[0]?.stage, "deep");
+    assert.equal(body.sleep.score, 77);
+    assert.equal(body.sleep.deep_min, 90);
+    assert.equal(body.sleep.rem_min, 80);
+    assert.equal(body.sleep.awake_count, 2);
+    assert.equal(body.sleep.efficiency, null);
+    assert.equal(body.sleep.avg_hr_bpm, 54);
+    assert.equal(body.sleep.avg_spo2, 97);
+
+    const sleepRead = await fetch(`http://127.0.0.1:${port}/v1/read/sleep?day=2024-06-15&device_id=${deviceId}`);
+    assert.equal(sleepRead.status, 200);
+    const sleepBody = (await sleepRead.json()) as {
+      source: string;
+      sleep: { score: number | null; deep_min: number | null; avg_spo2: number | null; efficiency: number | null };
+    };
+    assert.equal(sleepBody.source, "db");
+    assert.equal(sleepBody.sleep.score, 77);
+    assert.equal(sleepBody.sleep.deep_min, 90);
+    assert.equal(sleepBody.sleep.avg_spo2, 97);
+    assert.equal(sleepBody.sleep.efficiency, null);
     assert.equal(body.workouts[0]?.sport_type, "outdoor_running");
     assert.equal(body.workouts[0]?.title, "户外跑步");
     assert.equal(body.workouts[0]?.sport_type_label, "户外跑步");

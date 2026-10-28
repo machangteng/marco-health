@@ -93,6 +93,25 @@ These names are the `daily_aggregates` columns. The UI does not rename them.
 
 `heart_rate` points are `samples` rows with `record_type = heart_rate`. `bpm` repeats `value_num`. Workout `title` is also returned as `sport_type_label` (the ingest wire name). Goals (650 kcal / 30 min / 12 h / 10,000 steps) live in the UI only.
 
+### Sleep
+
+`sleep` on `/v1/read/today` and `/v1/read/sleep` is the longest session whose wake instant falls on that Shanghai day. `source` stays `"db"` when the day has a `daily_aggregates` row.
+
+| Field | Xiaomi source | Unit |
+| --- | --- | --- |
+| `started_at` / `ended_at` | `bedtime` / `wake_up_time` (raw row, or `device_bedtime` / `device_wake_up_time`) | timestamp |
+| `stages[]` | raw `items[]` with `start_time`, `end_time`, and `state` | `2` deep, `3` light, `4` REM, `5` awake. Named `deep\|light\|rem\|awake` still accepted |
+| `deep_min` `light_min` `rem_min` `awake_min` | `sleep_deep_duration`, `sleep_light_duration`, `sleep_rem_duration`, `sleep_awake_duration` | minutes. Derived from `stages` only when the column is null and a timeline exists |
+| `score` | raw `sleep_score` when it is 1–100, otherwise the aggregated daily `sleep` row | 0 is an empty placeholder and stays null |
+| `awake_count` | `awake_count` | count, including 0 |
+| `avg_hr_bpm` `min_hr_bpm` `max_hr_bpm` | `avg_hr` `min_hr` `max_hr` on the raw row, filled from the daily row when the raw row omitted them | bpm |
+| `avg_spo2` | aggregated daily `sleep.avg_spo2` | percent, 1–100 |
+| `efficiency` | `sleep_efficiency` only when that key is present | percent. Captured `sleep` payloads do not include it, so the card hides it |
+
+The daily pull asks for aggregated key `sleep` inside the existing window. That row's `segment_details` are sessions, not a stage timeline. Numeric `sleep_stage` on the daily row is a grade, not stages. The card draws a timeline when `stages` is non-empty, otherwise a stacked bar from the minute totals. It omits the bar when both are missing.
+
+Not on these payloads: breathing rate, and a nap-versus-main flag. `watch_daytime_sleep` is not requested — an unknown key fails the whole pull. A shorter session the same day is stored, and the read picks the longest one.
+
 ## Migrations
 
 SQL lives in `db/migrations/` and is applied in filename order by `npm run migrate`. The runner records versions in `schema_migrations`. That bookkeeping table is separate from the health schema.

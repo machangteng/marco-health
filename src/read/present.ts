@@ -22,6 +22,18 @@ export type SleepView = {
   ended_at: string;
   score: number | null;
   stages: SleepStageView[];
+  /** Minutes. Null when Xiaomi omitted that stage total and no timeline could derive it. */
+  deep_min: number | null;
+  light_min: number | null;
+  rem_min: number | null;
+  awake_min: number | null;
+  awake_count: number | null;
+  /** Null when the payload had no sleep_efficiency. */
+  efficiency: number | null;
+  avg_hr_bpm: number | null;
+  min_hr_bpm: number | null;
+  max_hr_bpm: number | null;
+  avg_spo2: number | null;
 };
 
 export type WorkoutView = {
@@ -374,6 +386,16 @@ export function sleepView(input: {
   endedAt: unknown;
   score: unknown;
   stages: Array<{ stage: unknown; startedAt: unknown; endedAt: unknown }>;
+  deepMin?: unknown;
+  lightMin?: unknown;
+  remMin?: unknown;
+  awakeMin?: unknown;
+  awakeCount?: unknown;
+  efficiency?: unknown;
+  avgHr?: unknown;
+  minHr?: unknown;
+  maxHr?: unknown;
+  avgSpo2?: unknown;
 }): SleepView | null {
   const started = stamp(input.startedAt);
   const ended = stamp(input.endedAt);
@@ -386,7 +408,22 @@ export function sleepView(input: {
     if (!stageStart || !stageEnd) continue;
     stages.push({ stage: stage.stage as SleepStageView["stage"], started_at: stageStart, ended_at: stageEnd });
   }
-  return { started_at: started, ended_at: ended, score: asNumber(input.score), stages };
+  return {
+    started_at: started,
+    ended_at: ended,
+    score: asNumber(input.score),
+    stages,
+    deep_min: minuteField(input.deepMin, derivedStageMinutes(stages, "deep")),
+    light_min: minuteField(input.lightMin, derivedStageMinutes(stages, "light")),
+    rem_min: minuteField(input.remMin, derivedStageMinutes(stages, "rem")),
+    awake_min: minuteField(input.awakeMin, derivedStageMinutes(stages, "awake")),
+    awake_count: asNumber(input.awakeCount),
+    efficiency: asNumber(input.efficiency),
+    avg_hr_bpm: asNumber(input.avgHr),
+    min_hr_bpm: asNumber(input.minHr),
+    max_hr_bpm: asNumber(input.maxHr),
+    avg_spo2: asNumber(input.avgSpo2),
+  };
 }
 
 export function workoutView(row: {
@@ -473,11 +510,43 @@ function sleepFromWire(row: Record<string, unknown>): SleepView | null {
     startedAt: row.started_at,
     endedAt: row.ended_at,
     score: row.score,
+    deepMin: row.deep_min,
+    lightMin: row.light_min,
+    remMin: row.rem_min,
+    awakeMin: row.awake_min,
+    awakeCount: row.awake_count,
+    efficiency: row.efficiency,
+    avgHr: row.avg_hr_bpm,
+    minHr: row.min_hr_bpm,
+    maxHr: row.max_hr_bpm,
+    avgSpo2: row.avg_spo2,
     stages: stages.map((stage) => {
       const item = typeof stage === "object" && stage !== null ? (stage as Record<string, unknown>) : {};
       return { stage: item.stage, startedAt: item.started_at, endedAt: item.ended_at };
     }),
   });
+}
+
+function minuteField(explicit: unknown, derived: number | null): number | null {
+  if (explicit === undefined) return derived;
+  const value = asNumber(explicit);
+  return value === null ? derived : value;
+}
+
+function derivedStageMinutes(stages: readonly SleepStageView[], stage: SleepStageView["stage"]): number | null {
+  let total = 0;
+  let seen = false;
+  for (const item of stages) {
+    if (item.stage !== stage) continue;
+    const started = asDate(item.started_at);
+    const ended = asDate(item.ended_at);
+    if (!started || !ended) continue;
+    const minutes = Math.round((ended.getTime() - started.getTime()) / 60_000);
+    if (minutes <= 0) continue;
+    seen = true;
+    total += minutes;
+  }
+  return seen ? total : null;
 }
 
 function workoutFromWire(row: Record<string, unknown>): WorkoutView | null {

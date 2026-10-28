@@ -175,6 +175,26 @@ function validateSleep(record: Record<string, unknown>): { ok: true; record: Sle
   if (ended.getTime() <= started.getTime()) return { ok: false, reason: "ended_before_started" };
   const score = readInt(record, "score", "invalid_sleep_score", 0, 100);
   if (typeof score === "string") return { ok: false, reason: score };
+  const deepMin = readInt(record, "deep_min", "invalid_sleep_minutes", 0);
+  if (typeof deepMin === "string") return { ok: false, reason: deepMin };
+  const lightMin = readInt(record, "light_min", "invalid_sleep_minutes", 0);
+  if (typeof lightMin === "string") return { ok: false, reason: lightMin };
+  const remMin = readInt(record, "rem_min", "invalid_sleep_minutes", 0);
+  if (typeof remMin === "string") return { ok: false, reason: remMin };
+  const awakeMin = readInt(record, "awake_min", "invalid_sleep_minutes", 0);
+  if (typeof awakeMin === "string") return { ok: false, reason: awakeMin };
+  const awakeCount = readInt(record, "awake_count", "invalid_awake_count", 0);
+  if (typeof awakeCount === "string") return { ok: false, reason: awakeCount };
+  const efficiency = readInt(record, "efficiency", "invalid_sleep_efficiency", 0, 100);
+  if (typeof efficiency === "string") return { ok: false, reason: efficiency };
+  const avgHr = readInt(record, "avg_hr_bpm", "invalid_sleep_hr", 1, 250);
+  if (typeof avgHr === "string") return { ok: false, reason: avgHr };
+  const minHr = readInt(record, "min_hr_bpm", "invalid_sleep_hr", 1, 250);
+  if (typeof minHr === "string") return { ok: false, reason: minHr };
+  const maxHr = readInt(record, "max_hr_bpm", "invalid_sleep_hr", 1, 250);
+  if (typeof maxHr === "string") return { ok: false, reason: maxHr };
+  const avgSpo2 = readInt(record, "avg_spo2", "invalid_sleep_spo2", 1, 100);
+  if (typeof avgSpo2 === "string") return { ok: false, reason: avgSpo2 };
   let stages: SleepStageRecord[] | null = null;
   if ("stages" in record && record.stages !== undefined && record.stages !== null) {
     if (!Array.isArray(record.stages)) return { ok: false, reason: "invalid_stage" };
@@ -193,6 +213,16 @@ function validateSleep(record: Record<string, unknown>): { ok: true; record: Sle
       ended_at: formatInShanghai(ended),
       score,
       stages,
+      deep_min: deepMin,
+      light_min: lightMin,
+      rem_min: remMin,
+      awake_min: awakeMin,
+      awake_count: awakeCount,
+      efficiency,
+      avg_hr_bpm: avgHr,
+      min_hr_bpm: minHr,
+      max_hr_bpm: maxHr,
+      avg_spo2: avgSpo2,
     },
   };
 }

@@ -59,14 +59,15 @@ const STEPS_SQL = `
 
 const SLEEP_SQL = `
   -- read:sleep-session
-  SELECT id::text AS id, started_at, ended_at, score
+  SELECT id::text AS id, started_at, ended_at, score,
+         deep_min, light_min, rem_min, awake_min, awake_count,
+         efficiency, avg_hr_bpm, min_hr_bpm, max_hr_bpm, avg_spo2
   FROM sleep_sessions
   WHERE device_id = $1::uuid
     AND record_type = 'sleep_session'
     AND ended_at >= $2::timestamptz
     AND ended_at < $3::timestamptz
-  ORDER BY ended_at DESC
-  LIMIT 1`;
+  ORDER BY ended_at DESC`;
 
 const STAGES_SQL = `
   -- read:sleep-stages
@@ -131,7 +132,7 @@ export async function readToday(db: Queryable, query: ReadQuery): Promise<TodayR
   const steps = await queryRows<Record<string, unknown>>(db, STEPS_SQL, [row.device_id, from, to]);
   const sleeps = await queryRows<Record<string, unknown>>(db, SLEEP_SQL, [row.device_id, from, to]);
   const workouts = await queryRows<Record<string, unknown>>(db, WORKOUTS_SQL, [row.device_id, to]);
-  const session = sleeps[0];
+  const session = pickMainSleep(sleeps);
   const stages =
     session && typeof session.id === "string"
       ? await queryRows<Record<string, unknown>>(db, STAGES_SQL, [session.id])
@@ -142,6 +143,16 @@ export async function readToday(db: Queryable, query: ReadQuery): Promise<TodayR
         startedAt: session.started_at,
         endedAt: session.ended_at,
         score: session.score,
+        deepMin: session.deep_min,
+        lightMin: session.light_min,
+        remMin: session.rem_min,
+        awakeMin: session.awake_min,
+        awakeCount: session.awake_count,
+        efficiency: session.efficiency,
+        avgHr: session.avg_hr_bpm,
+        minHr: session.min_hr_bpm,
+        maxHr: session.max_hr_bpm,
+        avgSpo2: session.avg_spo2,
         stages: stages.map((stage) => ({
           stage: stage.stage,
           startedAt: stage.started_at,
@@ -149,6 +160,12 @@ export async function readToday(db: Queryable, query: ReadQuery): Promise<TodayR
         })),
       })
     : null;
+  if (sleep && sleep.score == null) {
+    const dailyScore = metrics.sleep_score;
+    if (dailyScore != null && Number.isInteger(dailyScore) && dailyScore >= 1 && dailyScore <= 100) {
+      sleep.score = dailyScore;
+    }
+  }
   if (sleep && metrics.sleep_hours === null) metrics.sleep_hours = hoursBetween(sleep.started_at, sleep.ended_at);
   return buildToday({
     source: "db",
@@ -201,6 +218,27 @@ export async function readTrends(
     day: query.day,
     byDay: metricsByDay(days, sleeps),
   });
+}
+
+/** Longest session that wakes on the day. A later short nap does not replace the night. */
+function pickMainSleep(rows: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
+  let best: Record<string, unknown> | undefined;
+  let bestSpan = -1;
+  for (const row of rows) {
+    const span = spanMs(row.started_at, row.ended_at);
+    if (span > bestSpan) {
+      best = row;
+      bestSpan = span;
+    }
+  }
+  return best;
+}
+
+function spanMs(startedAt: unknown, endedAt: unknown): number {
+  const started = startedAt instanceof Date ? startedAt.getTime() : Date.parse(String(startedAt ?? ""));
+  const ended = endedAt instanceof Date ? endedAt.getTime() : Date.parse(String(endedAt ?? ""));
+  if (!Number.isFinite(started) || !Number.isFinite(ended)) return 0;
+  return Math.max(0, ended - started);
 }
 
 function metricsByDay(days: Array<Record<string, unknown>>, sleeps: Array<Record<string, unknown>>): Map<string, DayMetric> {

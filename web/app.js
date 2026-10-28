@@ -277,49 +277,156 @@
     });
   }
 
-  function stageSegments() {
-    const sleep = state.today && state.today.sleep;
-    const totals = { deep: 0, light: 0, rem: 0, awake: 0 };
-    if (!sleep) return [];
-    (sleep.stages || []).forEach((stage) => {
-      if (!Object.prototype.hasOwnProperty.call(totals, stage.stage)) return;
-      totals[stage.stage] += minutesBetween(stage.started_at, stage.ended_at);
+  function sleepTotals(sleep, stages) {
+    const fields = {
+      deep: sleep ? sleep.deep_min : null,
+      light: sleep ? sleep.light_min : null,
+      rem: sleep ? sleep.rem_min : null,
+      awake: sleep ? sleep.awake_min : null,
+    };
+    const anyField = STAGE_ORDER.some((id) => fields[id] != null);
+    return STAGE_ORDER.map((id) => {
+      let mins = 0;
+      let known = false;
+      if (anyField) {
+        known = fields[id] != null;
+        mins = known ? Math.max(0, Math.round(Number(fields[id]))) : 0;
+      } else {
+        stages.forEach((stage) => {
+          if (stage.stage !== id) return;
+          const span = minutesBetween(stage.started_at, stage.ended_at);
+          if (span > 0) {
+            known = true;
+            mins += span;
+          }
+        });
+      }
+      return {
+        id: id,
+        name: STAGE_PRESENT[id].name,
+        color: STAGE_PRESENT[id].color,
+        mins: mins,
+        known: known,
+      };
     });
-    return STAGE_ORDER.filter((id) => totals[id] > 0).map((id) => ({
-      id: id,
-      name: STAGE_PRESENT[id].name,
-      color: STAGE_PRESENT[id].color,
-      mins: totals[id],
-    }));
+  }
+
+  function stageBarHtml(stage) {
+    return (
+      '<div class="sleep-seg" style="flex:' +
+      Math.max(stage.mins, 1) +
+      ";background:" +
+      stage.color +
+      '" title="' +
+      escapeHtml(stage.name + " " + formatMinutes(stage.mins)) +
+      '"></div>'
+    );
+  }
+
+  function formatMinutes(total) {
+    const mins = Math.max(0, Math.round(total));
+    const hours = Math.floor(mins / 60);
+    const rest = mins % 60;
+    if (hours > 0) return hours + "小时" + rest + "分";
+    return rest + "分";
   }
 
   function renderSleep() {
+    const sleep = state.today && state.today.sleep;
     const bar = $("#sleep-stages");
     const legend = $("#stage-legend");
-    if (!bar || !legend) return;
-    const stages = stageSegments();
-    bar.innerHTML = stages
-      .map((stage) => {
+    const wrap = $("#sleep-stages-wrap");
+    const meta = $("#sleep-meta");
+    if (!bar || !legend || !wrap || !meta) return;
+    const stages = sleep && Array.isArray(sleep.stages) ? sleep.stages : [];
+    const totals = sleepTotals(sleep, stages);
+    const known = totals.filter((stage) => stage.known);
+    const positive = totals.filter((stage) => stage.mins > 0);
+    if (known.length === 0 && stages.length === 0) {
+      wrap.hidden = true;
+      bar.innerHTML = "";
+      legend.innerHTML = "";
+      bar.setAttribute("aria-label", "暂无睡眠阶段");
+    } else {
+      wrap.hidden = false;
+      const timeline = stages.length > 0 && positive.length > 0;
+      bar.classList.toggle("is-timeline", timeline);
+      if (timeline) {
+        bar.innerHTML = stages
+          .map((stage) => {
+            const present = STAGE_PRESENT[stage.stage];
+            if (!present) return "";
+            const mins = minutesBetween(stage.started_at, stage.ended_at);
+            if (mins <= 0) return "";
+            return stageBarHtml({ name: present.name, color: present.color, mins: mins });
+          })
+          .join("");
+        bar.setAttribute(
+          "aria-label",
+          "睡眠阶段时间线：" +
+            stages
+              .map((stage) => {
+                const present = STAGE_PRESENT[stage.stage];
+                if (!present) return "";
+                return present.name + " " + formatMinutes(minutesBetween(stage.started_at, stage.ended_at));
+              })
+              .filter(Boolean)
+              .join("，"),
+        );
+      } else if (positive.length > 0) {
+        bar.innerHTML = positive.map(stageBarHtml).join("");
+        bar.setAttribute(
+          "aria-label",
+          "睡眠阶段：" + positive.map((stage) => stage.name + " " + formatMinutes(stage.mins)).join("，"),
+        );
+      } else {
+        bar.innerHTML = "";
+        bar.setAttribute("aria-label", "暂无睡眠阶段时长");
+      }
+      const legendRows = known.length > 0 ? known : positive;
+      legend.innerHTML = legendRows
+        .map((stage) => {
+          return (
+            '<li><span class="swatch" style="background:' +
+            stage.color +
+            '"></span>' +
+            escapeHtml(stage.name) +
+            "<strong>" +
+            formatMinutes(stage.mins) +
+            "</strong></li>"
+          );
+        })
+        .join("");
+    }
+    const chips = sleepChips(sleep);
+    meta.hidden = chips.length === 0;
+    meta.innerHTML = chips
+      .map((chip) => {
         return (
-          '<div class="sleep-seg" style="flex:' +
-          stage.mins +
-          ";background:" +
-          stage.color +
-          '" title="' +
-          escapeHtml(stage.name + " " + stage.mins + " 分钟") +
-          '"></div>'
+          '<li><span class="meta-label">' +
+          escapeHtml(chip.label) +
+          '</span><span class="meta-value">' +
+          escapeHtml(chip.value) +
+          "</span></li>"
         );
       })
       .join("");
-    bar.setAttribute("aria-label", stages.length ? "睡眠阶段：" + stages.map((stage) => stage.name + " " + stage.mins + " 分钟").join("，") : "暂无睡眠阶段");
-    legend.innerHTML = stages
-      .map((stage) => {
-        const hours = Math.floor(stage.mins / 60);
-        const mins = stage.mins % 60;
-        const text = hours > 0 ? hours + "小时" + mins + "分" : mins + "分";
-        return '<li><span class="swatch" style="background:' + stage.color + '"></span>' + escapeHtml(stage.name) + "<strong>" + text + "</strong></li>";
-      })
-      .join("");
+  }
+
+  function sleepChips(sleep) {
+    if (!sleep) return [];
+    const chips = [];
+    if (sleep.efficiency != null) chips.push({ label: "睡眠效率", value: formatMetric(sleep.efficiency) + "%" });
+    if (sleep.awake_count != null) chips.push({ label: "清醒次数", value: formatMetric(sleep.awake_count) + " 次" });
+    if (sleep.avg_hr_bpm != null) {
+      let value = formatMetric(sleep.avg_hr_bpm) + " 次/分";
+      if (sleep.min_hr_bpm != null && sleep.max_hr_bpm != null) {
+        value = formatMetric(sleep.avg_hr_bpm) + "（" + formatMetric(sleep.min_hr_bpm) + "–" + formatMetric(sleep.max_hr_bpm) + "）";
+      }
+      chips.push({ label: "睡眠心率", value: value });
+    }
+    if (sleep.avg_spo2 != null) chips.push({ label: "睡眠血氧", value: formatMetric(sleep.avg_spo2) + "%" });
+    return chips;
   }
 
   function workoutVisual(sport) {

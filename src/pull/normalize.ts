@@ -62,25 +62,76 @@ export function normalizeHeartSamples(rows: readonly UpstreamRow[], windowStartS
   return samples;
 }
 
+/**
+ * Raw `get_fitness_data_by_time` key=sleep rows.
+ * Xiaomi stage items use numeric `state` (2 deep, 3 light, 4 REM, 5 awake), not the names deep|light|rem|awake.
+ * Durations on this row are minutes. A zero sleep_score is treated as absent.
+ */
 export function normalizeSleepSessions(rows: readonly UpstreamRow[]): SleepSessionRecord[] {
   const sessions: SleepSessionRecord[] = [];
   for (const row of rows) {
     const value = asObject(parseMaybeJson(row.value));
-    const bedtime = asNumber(value.bedtime);
-    const wake = asNumber(value.wake_up_time);
-    if (bedtime === null || wake === null) continue;
-    const startMs = epochMillis(bedtime);
-    const endMs = epochMillis(wake);
-    if (startMs === null || endMs === null || endMs <= startMs) continue;
-    sessions.push({
-      type: "sleep_session",
-      started_at: formatInShanghai(new Date(startMs)),
-      ended_at: formatInShanghai(new Date(endMs)),
-      score: asInt(value.sleep_score),
-      stages: readStages(value),
-    });
+    const session = sessionFromWindow(value.bedtime ?? value.device_bedtime, value.wake_up_time ?? value.device_wake_up_time);
+    if (!session) continue;
+    applySleepMetrics(session, value, "set");
+    session.stages = readStages(value);
+    sessions.push(session);
   }
   return sessions;
+}
+
+/**
+ * Aggregated `daily_report` key=sleep.
+ * `sleep_score`, REM minutes, heart rate, and `avg_spo2` live here.
+ * `segment_details` entries are sessions (bedtime / wake), not a stage timeline.
+ * `sleep_stage` on this row is an integer grade/count and is ignored.
+ * Day-level metrics fill only the longest segment so a shorter segment does not inherit the night score.
+ */
+export function normalizeAggregatedSleepSessions(rows: readonly UpstreamRow[]): SleepSessionRecord[] {
+  const sessions: SleepSessionRecord[] = [];
+  for (const row of rows) {
+    if (row.key !== "sleep") continue;
+    const value = asObject(parseMaybeJson(row.value));
+    const built: SleepSessionRecord[] = [];
+    if (Array.isArray(value.segment_details)) {
+      for (const item of value.segment_details) {
+        const segment = asObject(item);
+        const session = sessionFromWindow(segment.bedtime ?? segment.device_bedtime, segment.wake_up_time ?? segment.device_wake_up_time);
+        if (!session) continue;
+        applySleepMetrics(session, segment, "set");
+        built.push(session);
+      }
+    }
+    if (built.length === 0) {
+      const solo = sessionFromWindow(value.bedtime ?? value.device_bedtime, value.wake_up_time ?? value.device_wake_up_time);
+      if (solo) built.push(solo);
+    }
+    const longest = longestSession(built);
+    if (longest) applySleepMetrics(longest, value, "fill");
+    sessions.push(...built);
+  }
+  return sessions;
+}
+
+/** Raw fitness rows win when both describe the same bedtime. Aggregated rows fill nulls, including score. */
+export function mergeSleepSessions(
+  raw: readonly SleepSessionRecord[],
+  aggregated: readonly SleepSessionRecord[],
+): SleepSessionRecord[] {
+  const byStart = new Map<string, SleepSessionRecord>();
+  for (const session of raw) byStart.set(session.started_at, session);
+  for (const session of aggregated) {
+    const existing = byStart.get(session.started_at);
+    if (!existing) {
+      byStart.set(session.started_at, session);
+      continue;
+    }
+    applySleepMetrics(existing, metricsOf(session), "fill");
+    if ((existing.stages === null || existing.stages.length === 0) && session.stages !== null && session.stages.length > 0) {
+      existing.stages = session.stages;
+    }
+  }
+  return [...byStart.values()];
 }
 
 export function normalizeWorkouts(rows: readonly UpstreamRow[]): WorkoutRecord[] {
@@ -154,20 +205,153 @@ function applyDailyKey(current: DailySummaryRecord, key: string, value: Record<s
       return;
     }
     case "sleep":
-      current.sleep_score = asInt(value.sleep_score);
+      current.sleep_score = asScore(value.sleep_score);
       return;
     default:
       return;
   }
 }
 
+type SleepMetrics = Pick<
+  SleepSessionRecord,
+  | "score"
+  | "deep_min"
+  | "light_min"
+  | "rem_min"
+  | "awake_min"
+  | "awake_count"
+  | "efficiency"
+  | "avg_hr_bpm"
+  | "min_hr_bpm"
+  | "max_hr_bpm"
+  | "avg_spo2"
+>;
+
+const SLEEP_METRIC_KEYS = [
+  "score",
+  "deep_min",
+  "light_min",
+  "rem_min",
+  "awake_min",
+  "awake_count",
+  "efficiency",
+  "avg_hr_bpm",
+  "min_hr_bpm",
+  "max_hr_bpm",
+  "avg_spo2",
+] as const satisfies readonly (keyof SleepMetrics)[];
+
+/** Official sleep_state: 2 deep, 3 light, 4 REM, 5 awake. 0, 1, and 6 are not stages. */
+const SLEEP_STATE: Record<number, SleepStageRecord["stage"]> = {
+  2: "deep",
+  3: "light",
+  4: "rem",
+  5: "awake",
+};
+
+function emptySleep(startedAt: string, endedAt: string): SleepSessionRecord {
+  return {
+    type: "sleep_session",
+    started_at: startedAt,
+    ended_at: endedAt,
+    score: null,
+    stages: null,
+    deep_min: null,
+    light_min: null,
+    rem_min: null,
+    awake_min: null,
+    awake_count: null,
+    efficiency: null,
+    avg_hr_bpm: null,
+    min_hr_bpm: null,
+    max_hr_bpm: null,
+    avg_spo2: null,
+  };
+}
+
+function sessionFromWindow(bedtime: unknown, wake: unknown): SleepSessionRecord | null {
+  const start = asNumber(bedtime);
+  const end = asNumber(wake);
+  if (start === null || end === null) return null;
+  const startMs = epochMillis(start);
+  const endMs = epochMillis(end);
+  if (startMs === null || endMs === null || endMs <= startMs) return null;
+  return emptySleep(formatInShanghai(new Date(startMs)), formatInShanghai(new Date(endMs)));
+}
+
+function metricsFromUpstream(value: Record<string, unknown>): SleepMetrics {
+  return {
+    score: asScore(value.sleep_score ?? value.score),
+    deep_min: asMinute(value.sleep_deep_duration),
+    light_min: asMinute(value.sleep_light_duration),
+    rem_min: asMinute(value.sleep_rem_duration),
+    awake_min: asMinute(value.sleep_awake_duration),
+    awake_count: asCount(value.awake_count),
+    efficiency: asPercent(value.sleep_efficiency),
+    avg_hr_bpm: asHr(value.avg_hr),
+    min_hr_bpm: asHr(value.min_hr),
+    max_hr_bpm: asHr(value.max_hr),
+    avg_spo2: asPercent(value.avg_spo2),
+  };
+}
+
+function metricsOf(session: SleepSessionRecord): SleepMetrics {
+  return {
+    score: session.score,
+    deep_min: session.deep_min,
+    light_min: session.light_min,
+    rem_min: session.rem_min,
+    awake_min: session.awake_min,
+    awake_count: session.awake_count,
+    efficiency: session.efficiency,
+    avg_hr_bpm: session.avg_hr_bpm,
+    min_hr_bpm: session.min_hr_bpm,
+    max_hr_bpm: session.max_hr_bpm,
+    avg_spo2: session.avg_spo2,
+  };
+}
+
+function isSleepMetrics(value: Record<string, unknown> | SleepMetrics): value is SleepMetrics {
+  return "deep_min" in value && "avg_hr_bpm" in value;
+}
+
+function applySleepMetrics(session: SleepSessionRecord, value: Record<string, unknown> | SleepMetrics, mode: "set" | "fill"): void {
+  const incoming = isSleepMetrics(value) ? value : metricsFromUpstream(value);
+  for (const key of SLEEP_METRIC_KEYS) {
+    const next = incoming[key];
+    if (mode === "set") session[key] = next;
+    else if (session[key] === null && next !== null) session[key] = next;
+  }
+}
+
+function longestSession(sessions: readonly SleepSessionRecord[]): SleepSessionRecord | null {
+  let best: SleepSessionRecord | null = null;
+  let span = -1;
+  for (const session of sessions) {
+    const width = instantSpan(session.started_at, session.ended_at);
+    if (width > span) {
+      best = session;
+      span = width;
+    }
+  }
+  return best;
+}
+
+function instantSpan(startedAt: string, endedAt: string): number {
+  const started = Date.parse(startedAt);
+  const ended = Date.parse(endedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(ended)) return 0;
+  return Math.max(0, ended - started);
+}
+
+/** Timeline from `items`. `segment_details` is a session list, and numeric `sleep_stage` is not a timeline. */
 function readStages(value: Record<string, unknown>): SleepStageRecord[] | null {
-  const raw = value.items ?? value.segment_details ?? value.sleep_stage;
+  const raw = value.items;
   if (!Array.isArray(raw)) return null;
   const stages: SleepStageRecord[] = [];
   for (const item of raw) {
     const stage = asObject(item);
-    const name = normalizeStageName(stage.stage ?? stage.key);
+    const name = stageName(stage);
     const start = asNumber(stage.start_time ?? stage.started_at ?? stage.start);
     const end = asNumber(stage.end_time ?? stage.ended_at ?? stage.end);
     if (name === null || start === null || end === null) continue;
@@ -181,6 +365,14 @@ function readStages(value: Record<string, unknown>): SleepStageRecord[] | null {
     });
   }
   return stages;
+}
+
+function stageName(stage: Record<string, unknown>): SleepStageRecord["stage"] | null {
+  const named = normalizeStageName(stage.stage ?? stage.key);
+  if (named) return named;
+  const code = asInt(stage.state ?? stage.sleep_state ?? stage.stage);
+  if (code === null) return null;
+  return SLEEP_STATE[code] ?? null;
 }
 
 function normalizeStageName(value: unknown): SleepStageRecord["stage"] | null {
@@ -213,6 +405,33 @@ function asNumber(value: unknown): number | null {
 function asInt(value: unknown): number | null {
   const number = asNumber(value);
   if (number === null || !Number.isInteger(number)) return null;
+  return number;
+}
+
+/** 1–100. Xiaomi uses 0 as an empty placeholder, so 0 stays null. */
+function asScore(value: unknown): number | null {
+  const number = asInt(value);
+  if (number === null || number < 1 || number > 100) return null;
+  return number;
+}
+
+function asPercent(value: unknown): number | null {
+  return asScore(value);
+}
+
+function asMinute(value: unknown): number | null {
+  const number = asInt(value);
+  if (number === null || number < 0) return null;
+  return number;
+}
+
+function asCount(value: unknown): number | null {
+  return asMinute(value);
+}
+
+function asHr(value: unknown): number | null {
+  const number = asInt(value);
+  if (number === null || number < 1 || number > 250) return null;
   return number;
 }
 
