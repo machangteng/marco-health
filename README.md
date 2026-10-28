@@ -128,10 +128,10 @@ npm run pull:mock
 That reads `fixtures/mi_health/` and upserts through the same path as `POST /v1/ingest/batch`. It does not call Xiaomi.
 
 ```bash
-npm run pull:probe
+npm run pull:live
 ```
 
-The live probe calls `account.xiaomi.com` (pass token exchange), `sts-hlth.io.mi.com`, and `hlth.io.mi.com` only. It does not call Huami or `api-mifit`. If `XIAOMI_USER_ID` or `XIAOMI_PASS_TOKEN` is missing, the command prints `{"skipped":true,...}` and exits 0. When they are present it uses a two-day window, waits at least one second between requests, renews the session at most once after HTTP 401, and records `auth_expired` or `pass_token_invalid` on `sync_runs`.
+`npm run pull:probe` is the same program. It calls `account.xiaomi.com` (pass token exchange), `sts-hlth.io.mi.com`, and `hlth.io.mi.com` only. It does not call Huami or `api-mifit`. See [Daily live pull](#daily-live-pull).
 
 ## Layout
 
@@ -147,25 +147,53 @@ src/health.ts          database health check
 src/migrate.ts         migration runner
 src/ingest/            batch upsert
 src/read/              today and trend reads
-src/pull/              mock puller and optional live probe
+src/pull/              mock puller and stack X live pull
+.github/workflows/     daily live pull (schedule + workflow_dispatch)
 .env.example           DATABASE_URL and blank Xiaomi placeholders
 ```
+
+## Daily live pull
+
+`npm run pull:live` reads runtime credentials, pulls the Asia/Shanghai today window from stack X, and upserts through the same path as `POST /v1/ingest/batch`. The window is that calendar day plus the previous day (the contract's one-day pad). Ring fields stay `active_kcal`, `exercise_minutes`, and `stand_hours`.
+
+Requests wait 1–2 seconds with jitter. A health-host HTTP 401 refreshes the STS session once. A second 401 stops with `auth_expired` and does not retry. `passToken` code `70016` stops with `pass_token_invalid`.
+
+Missing `XIAOMI_USER_ID` or `XIAOMI_PASS_TOKEN` prints `error_code` `credentials_absent` and exits 1. That path does not call Xiaomi and does not write the database. A failed pull can record `sync_runs` and does not replace `daily_aggregates` with fixture rows. The command never runs `npm run pull:mock`.
+
+After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for that Shanghai day returns `source` `"db"`.
+
+### GitHub Actions
+
+`.github/workflows/daily-live-pull.yml` runs `npm run pull:live` on a schedule and on `workflow_dispatch`. The cron is `30 22 * * *` UTC, which is 06:30 Asia/Shanghai. The job is pull then ingest only. A failing step stops the job. It does not load `fixtures/mi_health/`.
+
+Create these Actions secrets. Put the values in GitHub only (Settings → Secrets and variables → Actions).
+
+| Secret | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | Postgres the runner can reach |
+| `XIAOMI_USER_ID` | yes | Vault `account.xiaomi.com` user id |
+| `XIAOMI_PASS_TOKEN` | yes | Vault `account.xiaomi.com` pass token |
+| `XIAOMI_DEVICE_ID` | no | Stable login device id. A blank secret is fine |
+
+`serviceToken` and `ssecurity` are STS session fields. The puller obtains them at runtime from `account.xiaomi.com` and `sts-hlth.io.mi.com`. They are not Actions secrets and must not be committed.
+
+Logs redact credential values. A failed run prints `live pull failed: <error_code>`.
 
 ## Credentials
 
 Copy `.env.example` to `.env` for the local database URL, or export `DATABASE_URL`. `.env` is gitignored. The loader accepts blank `XIAOMI_*` placeholders and refuses non-empty credential values in that file.
 
-Export these in the process environment only when you intend to run the live probe:
+Export these in the process environment only when you intend to run the live pull. The Actions secret names are the same.
 
 - `XIAOMI_USER_ID`
 - `XIAOMI_PASS_TOKEN`
 - `XIAOMI_DEVICE_ID` (optional login device id)
 
-Do not commit those values. Logs redact them.
+Do not commit those values. Logs redact them. Do not put `serviceToken` or `ssecurity` in `.env` or in git.
 
 ## Checks
 
-`npm test` includes the Postgres integration tests, so the Compose database has to be up and migrated. Read tests cover ring columns from a seeded `daily_aggregates` row, and the fixture fallback when that day has no row.
+`npm test` includes the Postgres integration tests, so the Compose database has to be up and migrated. Read tests cover ring columns from a seeded `daily_aggregates` row, and the fixture fallback when that day has no row. Stack X tests use an in-process STS and health fixture. They do not call Xiaomi.
 
 ```bash
 docker compose up -d --wait
