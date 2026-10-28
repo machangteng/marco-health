@@ -47,20 +47,27 @@ export function scriptedStackTransport(handlers: {
   };
 }
 
-export function stackLoginResponse(code = 0, location = LOGIN_LOCATION): ProbeResponse {
+export function stackLoginResponse(
+  code = 0,
+  location = LOGIN_LOCATION,
+  fields: {
+    securityStatus?: number;
+    nonce?: string;
+    ssecurity?: string;
+    omit?: readonly ("nonce" | "ssecurity" | "location" | "securityStatus")[];
+  } = {},
+): ProbeResponse {
+  const omit = new Set(fields.omit ?? []);
+  const body: Record<string, unknown> = { code };
+  if (!omit.has("nonce")) body.nonce = fields.nonce ?? "nonce-fixture";
+  if (!omit.has("ssecurity")) body.ssecurity = fields.ssecurity ?? STACK_FIXTURE_SSECURITY;
+  if (!omit.has("location")) body.location = location;
+  body.cUserId = "c-fixture";
+  if (!omit.has("securityStatus")) body.securityStatus = fields.securityStatus ?? 0;
   return {
     status: 200,
     headers: {},
-    body:
-      "&&&START&&&" +
-      JSON.stringify({
-        code,
-        nonce: "nonce-fixture",
-        ssecurity: STACK_FIXTURE_SSECURITY,
-        location,
-        cUserId: "c-fixture",
-        securityStatus: 0,
-      }),
+    body: "&&&START&&&" + JSON.stringify(body),
   };
 }
 

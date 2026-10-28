@@ -53,6 +53,19 @@ export type LiveProbeOptions = {
 
 export type ProbeWindow = { from: string; to: string };
 
+/**
+ * Non-secret facts from a failed serviceLogin or STS step.
+ * Values of passToken, ssecurity, nonce, location, and serviceToken are never copied here.
+ */
+export type AuthDiagnostics = {
+  login_code: number | null;
+  security_status: number | null;
+  has_ssecurity: boolean;
+  has_nonce: boolean;
+  has_location: boolean;
+  has_service_token: boolean;
+};
+
 export type LiveProbeResult =
   | { skipped: true; reason: "credentials_absent" }
   | {
@@ -65,6 +78,8 @@ export type LiveProbeResult =
       sync_run_id: string;
       vendor_sid: string;
       observed_at: string;
+      /** Set only when establish or renew fails. Omitted after a successful session. */
+      auth_diagnostics?: AuthDiagnostics;
     };
 
 type Session = {
@@ -80,11 +95,32 @@ class ProbeFailure extends Error {
   constructor(
     readonly errorCode: ErrorCode,
     readonly upstreamStatus: number | null,
+    readonly diagnostics?: AuthDiagnostics,
   ) {
     super(errorCode);
     this.name = "ProbeFailure";
   }
 }
+
+type ParsedLogin = {
+  code: number;
+  securityStatus: number;
+  codeReported: number | null;
+  securityStatusReported: number | null;
+  nonce: string;
+  ssecurity: string;
+  location: string;
+  cUserId: string;
+};
+
+const AUTH_DIAGNOSTIC_KEYS = [
+  "login_code",
+  "security_status",
+  "has_ssecurity",
+  "has_nonce",
+  "has_location",
+  "has_service_token",
+] as const;
 
 export function interRequestDelayMs(random: () => number = Math.random): number {
   const span = MAX_GAP_MS - MIN_GAP_MS;
@@ -145,6 +181,7 @@ export function fetchTransport(timeoutMs = 15_000): ProbeTransport {
  * Short stack X probe. Missing credentials return credentials_absent and do not call the network.
  * The daily CLI treats that result as a failure. It is not a successful skip.
  * A 401 on the health host renews the STS session once, then stops as auth_expired.
+ * serviceLogin and STS failures add safe diagnostic fields to the summary.
  * Requests wait 1-2s with jitter. passToken is sent only to account.xiaomi.com.
  * Data calls stay on hlth.io.mi.com.
  */
@@ -169,7 +206,7 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
   let renewed = false;
   let truncated = false;
 
-  const fail = (code: ErrorCode, status: number | null): LiveProbeResult => ({
+  const fail = (code: ErrorCode, status: number | null, diagnostics?: AuthDiagnostics): LiveProbeResult => ({
     skipped: false,
     status: "failed",
     error_code: code,
@@ -179,6 +216,7 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
     sync_run_id: syncRunId,
     vendor_sid: vendorSid,
     observed_at: observedAt,
+    ...(diagnostics ? { auth_diagnostics: diagnostics } : {}),
   });
 
   const call = async (url: string, headers: Record<string, string>): Promise<ProbeResponse> => {
@@ -287,7 +325,7 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
       observed_at: observedAt,
     };
   } catch (error) {
-    if (error instanceof ProbeFailure) return fail(error.errorCode, error.upstreamStatus);
+    if (error instanceof ProbeFailure) return fail(error.errorCode, error.upstreamStatus, error.diagnostics);
     return fail("unknown", upstreamStatus);
   }
 
@@ -302,12 +340,13 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
     if (response.status === 401) throw new ProbeFailure("auth_expired", 401);
     if (response.status !== 200) throw new ProbeFailure("unknown", response.status);
     const payload = parseLogin(response.body);
-    if (payload.code === 70016) throw new ProbeFailure("pass_token_invalid", 200);
-    if (payload.securityStatus !== 0) throw new ProbeFailure("auth_expired", 200);
+    const loginDiagnostics = diagnosticsFor(payload, false);
+    if (payload.code === 70016) throw new ProbeFailure("pass_token_invalid", 200, loginDiagnostics);
+    if (payload.securityStatus !== 0) throw new ProbeFailure("auth_expired", 200, loginDiagnostics);
     if (payload.code !== 0 || payload.ssecurity === "" || payload.nonce === "" || payload.location === "") {
-      throw new ProbeFailure("auth_expired", 200);
+      throw new ProbeFailure("auth_expired", 200, loginDiagnostics);
     }
-    if (!isStackXUrl(payload.location)) throw new ProbeFailure("unknown", 200);
+    if (!isStackXUrl(payload.location)) throw new ProbeFailure("unknown", 200, loginDiagnostics);
     current.ssecurity = payload.ssecurity;
     if (payload.cUserId !== "") current.cUserId = payload.cUserId;
     const sign = clientSign(payload.nonce, payload.ssecurity);
@@ -316,12 +355,13 @@ export async function runLiveProbe(options: LiveProbeOptions): Promise<LiveProbe
       cookie: `userId=${current.userId}; deviceId=${current.deviceId}`,
       "user-agent": "marco-health/0.2",
     });
-    if (sts.status === 429) throw new ProbeFailure("rate_limited", 429);
-    if (sts.status >= 500) throw new ProbeFailure("upstream_5xx", sts.status);
-    if (sts.status === 401) throw new ProbeFailure("auth_expired", 401);
-    if (sts.status !== 200) throw new ProbeFailure("auth_expired", sts.status);
     const token = cookieValue(sts.headers, "serviceToken");
-    if (token === "") throw new ProbeFailure("auth_expired", sts.status);
+    const stsDiagnostics = diagnosticsFor(payload, token !== "");
+    if (sts.status === 429) throw new ProbeFailure("rate_limited", 429, stsDiagnostics);
+    if (sts.status >= 500) throw new ProbeFailure("upstream_5xx", sts.status, stsDiagnostics);
+    if (sts.status === 401) throw new ProbeFailure("auth_expired", 401, stsDiagnostics);
+    if (sts.status !== 200) throw new ProbeFailure("auth_expired", sts.status, stsDiagnostics);
+    if (token === "") throw new ProbeFailure("auth_expired", sts.status, stsDiagnostics);
     current.serviceToken = token;
   }
 
@@ -403,10 +443,21 @@ export function publicProbeView(result: LiveProbeResult): Record<string, unknown
     status: result.status,
     error_code: result.error_code,
     upstream_status: result.upstream_status,
+    ...(result.auth_diagnostics ?? {}),
     window: result.window,
     sync_run_id: result.sync_run_id,
     record_count: result.records.length,
   };
+}
+
+/** Actions line for a failed establish/renew. Empty when the summary has no login diagnostics. */
+export function authDiagnosticsLine(summary: Record<string, unknown>): string {
+  if (!("login_code" in summary)) return "";
+  return AUTH_DIAGNOSTIC_KEYS.map((key) => {
+    const value = summary[key];
+    const rendered = value === undefined || value === null ? "null" : String(value);
+    return `${key}=${rendered}`;
+  }).join(" ");
 }
 
 /** Exit status for pull:live. Absent credentials and failed pulls are both failures. */
@@ -428,22 +479,47 @@ function healthCookie(session: Session): string {
   return pairs.join("; ");
 }
 
-function parseLogin(body: string): { code: number; securityStatus: number; nonce: string; ssecurity: string; location: string; cUserId: string } {
+function parseLogin(body: string): ParsedLogin {
   const text = body.startsWith("&&&START&&&") ? body.slice("&&&START&&&".length) : body;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    throw new ProbeFailure("parse_error", 200);
+    throw new ProbeFailure("parse_error", 200, emptyAuthDiagnostics());
   }
   const object = asObject(parsed);
+  const codeReported = finiteNumber(object.code);
   return {
-    code: asCode(object.code),
+    code: codeReported ?? -1,
+    codeReported,
     securityStatus: object.securityStatus === undefined ? 0 : asCode(object.securityStatus),
+    securityStatusReported: object.securityStatus === undefined ? null : finiteNumber(object.securityStatus),
     nonce: typeof object.nonce === "string" ? object.nonce : "",
     ssecurity: typeof object.ssecurity === "string" ? object.ssecurity : "",
     location: typeof object.location === "string" ? object.location : "",
     cUserId: typeof object.cUserId === "string" ? object.cUserId : "",
+  };
+}
+
+function diagnosticsFor(payload: ParsedLogin, hasServiceToken: boolean): AuthDiagnostics {
+  return {
+    login_code: payload.codeReported,
+    security_status: payload.securityStatusReported,
+    has_ssecurity: payload.ssecurity !== "",
+    has_nonce: payload.nonce !== "",
+    has_location: payload.location !== "",
+    has_service_token: hasServiceToken,
+  };
+}
+
+function emptyAuthDiagnostics(): AuthDiagnostics {
+  return {
+    login_code: null,
+    security_status: null,
+    has_ssecurity: false,
+    has_nonce: false,
+    has_location: false,
+    has_service_token: false,
   };
 }
 
@@ -468,10 +544,14 @@ function asObject(value: unknown): Record<string, unknown> {
   return {};
 }
 
-function asCode(value: unknown): number {
+function finiteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
-  return -1;
+  return null;
+}
+
+function asCode(value: unknown): number {
+  return finiteNumber(value) ?? -1;
 }
 
 function isTimeout(error: unknown): boolean {

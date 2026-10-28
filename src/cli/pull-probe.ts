@@ -2,7 +2,7 @@ import { appendFileSync } from "node:fs";
 import { connectWithRetry } from "../db.js";
 import { maskSecrets } from "../mask.js";
 import { asQueryable } from "../query.js";
-import { livePullExitCode, livePullSummary, runLiveProbe } from "../pull/live-probe.js";
+import { authDiagnosticsLine, livePullExitCode, livePullSummary, runLiveProbe } from "../pull/live-probe.js";
 import { persistLiveProbe } from "../pull/persist.js";
 
 /**
@@ -15,7 +15,8 @@ async function main(): Promise<void> {
     env: process.env,
     log: (line) => console.error(maskSecrets(line, secrets)),
   });
-  console.log(JSON.stringify(livePullSummary(result)));
+  const summary = livePullSummary(result);
+  console.log(JSON.stringify(summary));
   if (result.skipped) {
     note("credentials_absent", false);
     process.exitCode = 1;
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
     throw error;
   }
   const exitCode = livePullExitCode(result);
-  if (exitCode !== 0) note(result.error_code ?? "unknown", false);
+  if (exitCode !== 0) note(result.error_code ?? "unknown", false, authDiagnosticsLine(summary));
   else note(result.status, true);
   process.exitCode = exitCode;
 }
@@ -52,11 +53,12 @@ function runtimeSecrets(): string[] {
   return values.map((value) => value?.trim() ?? "").filter((value) => value !== "");
 }
 
-function note(code: string, ok: boolean): void {
-  const line = ok ? `live pull ${code}` : `live pull failed: ${code}`;
+function note(code: string, ok: boolean, diagnostics = ""): void {
+  const detail = diagnostics === "" ? "" : ` ${diagnostics}`;
+  const line = ok ? `live pull ${code}` : `live pull failed: ${code}${detail}`;
   if (!ok) {
     console.error(line);
-    if (process.env.GITHUB_ACTIONS === "true") console.error(`::error title=live pull::${code}`);
+    if (process.env.GITHUB_ACTIONS === "true") console.error(`::error title=live pull::${line}`);
   }
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) return;
