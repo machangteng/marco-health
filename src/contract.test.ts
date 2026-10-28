@@ -6,6 +6,7 @@ import { maskSecrets, scrubSecrets } from "./mask.js";
 import { normalizeDailyReports, normalizeHeartSamples } from "./pull/normalize.js";
 import {
   accountExternalId,
+  authDiagnosticsLine,
   interRequestDelayMs,
   isStackXUrl,
   livePullExitCode,
@@ -13,6 +14,7 @@ import {
   publicProbeView,
   readXiaomiCredentials,
   runLiveProbe,
+  type ProbeResponse,
   type ProbeTransport,
 } from "./pull/live-probe.js";
 import {
@@ -229,6 +231,8 @@ test("live probe pulls a short window, spaces calls, and hides credentials", asy
   assert.equal(daily.steps, 100);
   assert.equal(result.vendor_sid, accountExternalId("10001"));
   assert.equal(JSON.stringify(publicProbeView(result)).includes(PASS), false);
+  assert.equal("login_code" in livePullSummary(result), false);
+  assert.equal(authDiagnosticsLine(livePullSummary(result)), "");
   assert.equal(livePullExitCode(result), 0);
 });
 
@@ -263,6 +267,8 @@ test("live probe renews once on 401 and then stops", async () => {
   assert.equal(health, 2);
   assert.equal(livePullExitCode(result), 1);
   assert.equal(livePullSummary(result).error_code, "auth_expired");
+  assert.equal("security_status" in livePullSummary(result), false);
+  assert.equal(authDiagnosticsLine(livePullSummary(result)), "");
 });
 
 test("live probe maps passToken refusal and does not follow a non-stack-X location", async () => {
@@ -358,6 +364,202 @@ test("live probe classifies upstream failures", async () => {
   }
 });
 
+test("serviceLogin failures expose safe auth diagnostics", async () => {
+  const location = "https://sts-hlth.io.mi.com/healthapp/sts?sid=miothealth&token=fixture-query-secret";
+  const cases: Array<{
+    name: string;
+    response: ProbeResponse;
+    error_code: string;
+    login_code: number | null;
+    security_status: number | null;
+    has_ssecurity: boolean;
+    has_nonce: boolean;
+    has_location: boolean;
+    has_service_token: boolean;
+    reachesSts: boolean;
+  }> = [
+    {
+      name: "70016",
+      response: loginResponse(70016, location),
+      error_code: "pass_token_invalid",
+      login_code: 70016,
+      security_status: 0,
+      has_ssecurity: true,
+      has_nonce: true,
+      has_location: true,
+      has_service_token: false,
+      reachesSts: false,
+    },
+    {
+      name: "securityStatus",
+      response: loginResponse(0, location, { securityStatus: 4 }),
+      error_code: "auth_expired",
+      login_code: 0,
+      security_status: 4,
+      has_ssecurity: true,
+      has_nonce: true,
+      has_location: true,
+      has_service_token: false,
+      reachesSts: false,
+    },
+    {
+      name: "securityStatus string",
+      response: {
+        status: 200,
+        headers: {},
+        body:
+          "&&&START&&&" +
+          JSON.stringify({
+            code: "0",
+            securityStatus: "4",
+            nonce: "nonce-fixture",
+            ssecurity: SSECURITY,
+            location,
+          }),
+      },
+      error_code: "auth_expired",
+      login_code: 0,
+      security_status: 4,
+      has_ssecurity: true,
+      has_nonce: true,
+      has_location: true,
+      has_service_token: false,
+      reachesSts: false,
+    },
+    {
+      name: "missing location",
+      response: loginResponse(0, location, { omit: ["location"] }),
+      error_code: "auth_expired",
+      login_code: 0,
+      security_status: 0,
+      has_ssecurity: true,
+      has_nonce: true,
+      has_location: false,
+      has_service_token: false,
+      reachesSts: false,
+    },
+    {
+      name: "missing nonce",
+      response: loginResponse(0, location, { omit: ["nonce"] }),
+      error_code: "auth_expired",
+      login_code: 0,
+      security_status: 0,
+      has_ssecurity: true,
+      has_nonce: false,
+      has_location: true,
+      has_service_token: false,
+      reachesSts: false,
+    },
+    {
+      name: "missing ssecurity",
+      response: loginResponse(0, location, { omit: ["ssecurity"] }),
+      error_code: "auth_expired",
+      login_code: 0,
+      security_status: 0,
+      has_ssecurity: false,
+      has_nonce: true,
+      has_location: true,
+      has_service_token: false,
+      reachesSts: false,
+    },
+    {
+      name: "missing serviceToken",
+      response: loginResponse(0, location),
+      error_code: "auth_expired",
+      login_code: 0,
+      security_status: 0,
+      has_ssecurity: true,
+      has_nonce: true,
+      has_location: true,
+      has_service_token: false,
+      reachesSts: true,
+    },
+  ];
+
+  for (const item of cases) {
+    const logs: string[] = [];
+    const hosts: string[] = [];
+    const result = await runLiveProbe({
+      env: { XIAOMI_USER_ID: "10001", XIAOMI_PASS_TOKEN: PASS, XIAOMI_DEVICE_ID: "ABCDEF0123456789" },
+      transport: async (request) => {
+        const url = new URL(request.url);
+        hosts.push(url.host);
+        if (url.host === "account.xiaomi.com") return item.response;
+        if (url.host === "sts-hlth.io.mi.com") return { status: 200, headers: {}, body: "ok" };
+        throw new Error(`unexpected host ${url.host}`);
+      },
+      sleep: async () => undefined,
+      now: () => NOW,
+      random: () => 0,
+      log: (line) => logs.push(line),
+      dailyKeys: ["steps"],
+      includeHeartSamples: false,
+      includeSleep: false,
+      includeSport: false,
+    });
+    assert.equal(result.skipped, false, item.name);
+    if (result.skipped) continue;
+    assert.equal(result.error_code, item.error_code, item.name);
+    assert.equal(hosts.includes("sts-hlth.io.mi.com"), item.reachesSts, item.name);
+    assert.equal(hosts.includes("hlth.io.mi.com"), false, item.name);
+    const summary = livePullSummary(result);
+    assert.equal(summary.error_code, item.error_code, item.name);
+    assert.equal(summary.upstream_status, 200, item.name);
+    assert.equal(summary.login_code, item.login_code, item.name);
+    assert.equal(summary.security_status, item.security_status, item.name);
+    assert.equal(summary.has_ssecurity, item.has_ssecurity, item.name);
+    assert.equal(summary.has_nonce, item.has_nonce, item.name);
+    assert.equal(summary.has_location, item.has_location, item.name);
+    assert.equal(summary.has_service_token, item.has_service_token, item.name);
+    assert.equal(
+      authDiagnosticsLine(summary),
+      `login_code=${item.login_code} security_status=${item.security_status} has_ssecurity=${item.has_ssecurity} has_nonce=${item.has_nonce} has_location=${item.has_location} has_service_token=${item.has_service_token}`,
+      item.name,
+    );
+    const encoded = `${JSON.stringify(summary)}\n${authDiagnosticsLine(summary)}\n${logs.join("\n")}`;
+    for (const secret of [PASS, SSECURITY, SERVICE, "nonce-fixture", "fixture-query-secret", "clientSign"]) {
+      assert.equal(encoded.includes(secret), false, `${item.name} leaked ${secret}`);
+    }
+    assert.equal(logs.some((line) => line.includes("?")), false, item.name);
+    for (const key of Object.keys(summary)) {
+      assert.equal(["passToken", "pass_token", "ssecurity", "nonce", "location", "serviceToken", "service_token", "cookie"].includes(key), false, key);
+    }
+  }
+
+  let renewals = 0;
+  const renewed = await runLiveProbe({
+    env: { XIAOMI_USER_ID: "10001", XIAOMI_PASS_TOKEN: PASS },
+    transport: scriptedTransport({
+      onLogin() {
+        renewals += 1;
+        if (renewals === 1) return loginResponse();
+        return loginResponse(0, location, { securityStatus: 2 });
+      },
+      onHealth: () => ({ status: 401, headers: {}, body: "" }),
+    }),
+    sleep: async () => undefined,
+    now: () => NOW,
+    random: () => 0,
+    dailyKeys: ["steps"],
+    includeHeartSamples: false,
+    includeSleep: false,
+    includeSport: false,
+  });
+  assert.equal(renewed.skipped, false);
+  if (!renewed.skipped) {
+    assert.equal(renewals, 2);
+    const summary = livePullSummary(renewed);
+    assert.equal(summary.error_code, "auth_expired");
+    assert.equal(summary.login_code, 0);
+    assert.equal(summary.security_status, 2);
+    assert.equal(summary.has_ssecurity, true);
+    assert.equal(summary.has_nonce, true);
+    assert.equal(summary.has_location, true);
+    assert.equal(summary.has_service_token, false);
+    assert.equal(JSON.stringify(summary).includes("fixture-query-secret"), false);
+  }
+});
+
 test("daily workflow names Actions secrets and does not load fixtures", () => {
   const workflow = readFileSync(new URL("../.github/workflows/daily-live-pull.yml", import.meta.url), "utf8");
   const cli = readFileSync(new URL("./cli/pull-probe.ts", import.meta.url), "utf8");
@@ -373,4 +575,10 @@ test("daily workflow names Actions secrets and does not load fixtures", () => {
   assert.equal(cli.includes("runMockPull"), false);
   assert.equal(cli.includes("fixtures/mi_health"), false);
   assert.match(cli, /credentials_absent/);
+  assert.match(cli, /authDiagnosticsLine\(summary\)/);
+  assert.match(cli, /GITHUB_STEP_SUMMARY/);
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  assert.match(readme, /security_status/);
+  assert.match(readme, /安全验证/);
+  assert.match(readme, /has_service_token/);
 });

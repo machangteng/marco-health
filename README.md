@@ -158,6 +158,10 @@ src/pull/              mock puller and stack X live pull
 
 Requests wait 1–2 seconds with jitter. A health-host HTTP 401 refreshes the STS session once. A second 401 stops with `auth_expired` and does not retry. `passToken` code `70016` stops with `pass_token_invalid`.
 
+A failure inside `serviceLogin` or the STS call that follows it adds six fields to the JSON summary and to the Actions line `live pull failed: …`: `login_code`, `security_status`, `has_ssecurity`, `has_nonce`, `has_location`, and `has_service_token`. These are a code, a status, and booleans. The summary does not include `passToken`, `ssecurity`, `nonce`, the `location` URL, `serviceToken`, or cookies.
+
+`login_code` is the numeric login `code`, or `null` when that field is missing. `70016` remains `pass_token_invalid`. `security_status` is Xiaomi `securityStatus`. A value other than `0` is `auth_expired` and means the account needs phone confirmation (安全验证). `null` means the field was absent; the puller still treats that as `0`. `has_ssecurity`, `has_nonce`, and `has_location` are false when that login field is missing or empty, which is also `auth_expired`. `has_service_token` is true only when the STS response included a `serviceToken` cookie. It stays false when STS was not called or the cookie was absent. A later health-host 401, after login and STS succeeded, is still `auth_expired` and does not add these fields.
+
 Missing `XIAOMI_USER_ID` or `XIAOMI_PASS_TOKEN` prints `error_code` `credentials_absent` and exits 1. That path does not call Xiaomi and does not write the database. A failed pull can record `sync_runs` and does not replace `daily_aggregates` with fixture rows. The command never runs `npm run pull:mock`.
 
 After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for that Shanghai day returns `source` `"db"`.
@@ -179,7 +183,7 @@ Create these Actions secrets. Put the values in GitHub only (Settings → Secret
 
 `serviceToken` and `ssecurity` are STS session fields. The puller obtains them at runtime from `account.xiaomi.com` and `sts-hlth.io.mi.com`. They are not Actions secrets and must not be committed.
 
-Logs redact credential values. A failed run prints `live pull failed: <error_code>`.
+Logs redact credential values. A failed run prints `live pull failed: <error_code>`. A `serviceLogin` or STS failure appends the safe diagnostic fields described above.
 
 #### Neon Free
 
