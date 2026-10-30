@@ -64,8 +64,10 @@ export type TodayResponse = {
   timezone: "Asia/Shanghai";
   /** Day the numbers belong to. Fixture fallback uses the fixture daily_summary day. */
   day: string;
-  /** Day the client asked for. Defaults to today in Asia/Shanghai. */
+  /** Day the client asked for. Defaults to yesterday in Asia/Shanghai. */
   requested_day: string;
+  /** Calendar day has ended; does not guarantee upstream data completeness. */
+  is_complete_day: boolean;
   rings: {
     move: { active_kcal: number | null };
     exercise: { exercise_minutes: number | null };
@@ -240,6 +242,7 @@ export function buildToday(input: {
     timezone: "Asia/Shanghai",
     day: input.day,
     requested_day: input.requestedDay,
+    is_complete_day: input.day < shanghaiDay(new Date()),
     rings: {
       move: { active_kcal: metrics.active_kcal },
       exercise: { exercise_minutes: metrics.exercise_minutes },

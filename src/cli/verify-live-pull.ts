@@ -1,16 +1,16 @@
 import { appendFileSync } from "node:fs";
 import { connectWithRetry } from "../db.js";
 import { maskSecrets } from "../mask.js";
-import { probeWindow } from "../pull/live-probe.js";
+import { lastCompleteShanghaiDay } from "../time.js";
 import { asQueryable } from "../query.js";
 import { formatLivePullVerify, queryLivePullVerify } from "../verify/live-pull.js";
 
 /**
- * After pull:live, prove Asia/Shanghai today (the pull window end) has
+ * After pull:live, prove Asia/Shanghai yesterday (the most recent complete day) has
  * daily_aggregates rows. Prints counts only. Exits 1 when a read would be fixture.
  */
 async function main(): Promise<void> {
-  const day = probeWindow(new Date()).to;
+  const day = lastCompleteShanghaiDay(new Date());
   const client = await connectWithRetry();
   try {
     const result = await queryLivePullVerify(asQueryable(client), day);

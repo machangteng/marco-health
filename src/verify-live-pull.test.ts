@@ -8,7 +8,7 @@ import { migrateToHead } from "./migrate.js";
 import { PROBE_WINDOW_DAYS, probeWindow } from "./pull/live-probe.js";
 import { asQueryable, type Queryable } from "./query.js";
 import { readToday } from "./read/service.js";
-import { shanghaiDay } from "./time.js";
+import { lastCompleteShanghaiDay, shanghaiDay } from "./time.js";
 import { formatLivePullVerify, judgeLivePullVerify, queryLivePullVerify } from "./verify/live-pull.js";
 
 const LINE = /^verify (ok|failed): day=\d{4}-\d{2}-\d{2} aggregates=\d+ samples=\d+ source=(db|fixture)$/;
@@ -118,13 +118,14 @@ test("a bad count fails closed", async () => {
   await assert.rejects(() => queryLivePullVerify(db, "2026-10-28"), /non-negative integer/);
 });
 
-test("verified day is the pull window end in Asia/Shanghai", () => {
+test("verified day is yesterday inside the pull window in Asia/Shanghai", () => {
   const now = new Date("2026-10-28T22:30:00.000Z");
   assert.equal(shanghaiDay(now), "2026-10-29");
   const window = probeWindow(now);
   assert.equal(PROBE_WINDOW_DAYS, 7);
   assert.equal(window.from, "2026-10-23");
   assert.equal(window.to, "2026-10-29");
+  assert.equal(lastCompleteShanghaiDay(now), "2026-10-28");
 });
 
 test("daily workflow verifies after pull:live and documents the summary line", () => {
@@ -140,7 +141,7 @@ test("daily workflow verifies after pull:live and documents the summary line", (
   assert.match(afterPull, /secrets\.DATABASE_URL/);
   assert.equal(afterPull.includes("XIAOMI_"), false);
   assert.equal(afterPull.includes("echo"), false);
-  assert.match(cli, /probeWindow/);
+  assert.match(cli, /lastCompleteShanghaiDay\(new Date\(\)\)/);
   assert.match(cli, /GITHUB_STEP_SUMMARY/);
   assert.match(cli, /maskSecrets/);
   assert.equal(cli.includes("pull:mock"), false);

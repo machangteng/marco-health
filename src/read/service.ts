@@ -21,6 +21,8 @@ import {
 
 export type ReadQuery = {
   day: string;
+  /** Default reads keep the most recent night; explicit day keeps its wake day. */
+  sleepDay?: string;
   deviceId: string | null;
 };
 
@@ -130,7 +132,10 @@ export async function readToday(db: Queryable, query: ReadQuery): Promise<TodayR
   const to = shanghaiDayStart(shiftShanghaiDay(query.day, 1));
   const hearts = await queryRows<Record<string, unknown>>(db, HEART_SQL, [row.device_id, from, to]);
   const steps = await queryRows<Record<string, unknown>>(db, STEPS_SQL, [row.device_id, from, to]);
-  const sleeps = await queryRows<Record<string, unknown>>(db, SLEEP_SQL, [row.device_id, from, to]);
+  const sleepDay = query.sleepDay ?? query.day;
+  const sleeps = await queryRows<Record<string, unknown>>(db, SLEEP_SQL, [
+    row.device_id, shanghaiDayStart(sleepDay), shanghaiDayStart(shiftShanghaiDay(sleepDay, 1)),
+  ]);
   const workouts = await queryRows<Record<string, unknown>>(db, WORKOUTS_SQL, [row.device_id, to]);
   const session = pickMainSleep(sleeps);
   const stages =
@@ -160,12 +165,13 @@ export async function readToday(db: Queryable, query: ReadQuery): Promise<TodayR
         })),
       })
     : null;
-  if (sleep && sleep.score == null) {
+  if (sleep && sleep.score == null && sleepDay === query.day) {
     const dailyScore = metrics.sleep_score;
     if (dailyScore != null && Number.isInteger(dailyScore) && dailyScore >= 1 && dailyScore <= 100) {
       sleep.score = dailyScore;
     }
   }
+  if (sleepDay !== query.day) metrics.sleep_score = sleep?.score ?? null;
   if (sleep && metrics.sleep_hours === null) metrics.sleep_hours = hoursBetween(sleep.started_at, sleep.ended_at);
   return buildToday({
     source: "db",

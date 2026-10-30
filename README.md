@@ -64,7 +64,7 @@ npm start
 
 ## Read API
 
-Day keys are `YYYY-MM-DD` in **Asia/Shanghai**. Optional `device_id` (uuid) limits the query to one device. Omit it and the latest `daily_aggregates` row in the window is used.
+Day keys are `YYYY-MM-DD` in **Asia/Shanghai**. Without `day`, `/today`, `/heart-rate`, `/sleep`, and `/workouts` default to yesterday (the most recent complete day); explicit `day` is unchanged. Trends still default to today. `is_complete_day` indicates that the returned `day` has ended in Shanghai, not that upstream data is guaranteed complete. The overview title uses the returned `day`, e.g. 昨天 10/29 or 今天 10/30. Optional `device_id` (uuid) limits the query to one device. Omit it and the latest `daily_aggregates` row in the window is used.
 
 | Method | Path | Body |
 | --- | --- | --- |
@@ -95,7 +95,7 @@ These names are the `daily_aggregates` columns. The UI does not rename them.
 
 ### Sleep
 
-`sleep` on `/v1/read/today` and `/v1/read/sleep` is the longest session whose wake instant falls on that Shanghai day. `source` stays `"db"` when the day has a `daily_aggregates` row.
+`sleep` on `/v1/read/today` and `/v1/read/sleep` is the longest session whose wake instant falls on the explicit Shanghai day. Without `day`, sleep instead uses today as the wake day, preserving 昨晚 while the overview uses yesterday. A missing latest-night score does not fall back to yesterday’s daily score. Fixture fallback remains a labeled fixture replay. `source` stays `"db"` when the day has a `daily_aggregates` row.
 
 | Field | Xiaomi source | Unit |
 | --- | --- | --- |
@@ -174,7 +174,7 @@ src/verify/            Shanghai-day check after the live pull
 
 ## Daily live pull
 
-`npm run pull:live` reads runtime credentials, pulls the past **7 Asia/Shanghai calendar days** (inclusive, ending today) from stack X, and upserts through the same path as `POST /v1/ingest/batch`. The window was 2 days (that calendar day plus the previous day). Heart-rate and sleep queries still start one calendar day before the window; samples before the window start are dropped. Ring fields stay `active_kcal`, `exercise_minutes`, and `stand_hours`.
+`npm run pull:live` reads runtime credentials, pulls the past **7 Asia/Shanghai calendar days** (inclusive, ending today) from stack X, and upserts through the same path as `POST /v1/ingest/batch`. The window was 2 days. At the scheduled 06:30 Shanghai run, the end timestamp is the run instant, after yesterday’s 24:00+08:00, so yesterday is fully re-fetched and newer values replace partial daily rows through the existing idempotent upsert. Heart-rate and sleep queries still start one calendar day before the window; samples before the window start are dropped. Ring fields stay `active_kcal`, `exercise_minutes`, and `stand_hours`.
 
 `XIAOMI_PULL_WINDOW_DAYS` overrides that width in the process environment. The default is 7. A value above 7 is clamped to 7, so the daily job does not become a multi-week archive. It is not a credential, it is not loaded from `.env`, and it is not set on Render.
 
@@ -196,7 +196,7 @@ After a successful ingest, `GET /v1/read/today?day=YYYY-MM-DD` for a Shanghai da
 
 `npm run migrate` is idempotent. Applied versions are stored in `schema_migrations`. A second run on a database that already has the locked schema prints `schema up to date` and changes nothing.
 
-`npm run verify:live` queries Postgres with the `DATABASE_URL` secret. It counts `daily_aggregates` rows (`record_type = daily_summary`) and `samples` rows for Asia/Shanghai today, the last day of the 7-day pull window. `source` is `db` when that day has at least one `daily_aggregates` row, the same rule as `GET /v1/read/today`. Zero rows fail the step, because a read of that day would use `source` `fixture`. The job summary line is counts only:
+`npm run verify:live` queries Postgres with the `DATABASE_URL` secret. It counts `daily_aggregates` rows (`record_type = daily_summary`) and `samples` rows for Asia/Shanghai yesterday, the most recent complete day inside the 7-day pull window. `source` is `db` when that day has at least one `daily_aggregates` row, the same rule as `GET /v1/read/today`. Zero rows fail the step, because a read of that day would use `source` `fixture`. The job summary line is counts only:
 
 ```
 verify ok: day=YYYY-MM-DD aggregates=N samples=M source=db
@@ -230,7 +230,7 @@ Do not commit the URI. Do not add `serviceToken` or `ssecurity` as secrets.
 
 #### One-shot backfill
 
-After this 7-day window is merged to `main`, run **Actions → daily-live-pull → Run workflow** once. That single run applies pending migrations, pulls the past 7 Asia/Shanghai calendar days, upserts them into Neon, then verifies today. Later scheduled runs keep the same 7-day window. This is not a multi-week archive.
+After this 7-day window is merged to `main`, run **Actions → daily-live-pull → Run workflow** once. That single run applies pending migrations, pulls the past 7 Asia/Shanghai calendar days, upserts them into Neon, then verifies yesterday. Later scheduled runs keep the same 7-day window. This is not a multi-week archive.
 
 If migrate fails, `pull:live` does not run. If the pull fails, verify does not run. A failed pull does not replace stored rows with fixture data. The job summary shows `verify ok: day=YYYY-MM-DD aggregates=N samples=M source=db` when that Shanghai day has `daily_aggregates` rows.
 
@@ -290,6 +290,6 @@ curl -fsS "https://<host>/health"
 curl -fsS "https://<host>/v1/read/today"
 ```
 
-`/health` returns JSON. Status `200` and `schemaReady: true` means Neon accepted a query and the locked relations are present. `/v1/read/today` returns JSON. `source` is `"db"` when the Shanghai day has `daily_aggregates` rows, and `"fixture"` when it does not. Open `https://<host>/` on a phone. The UI (今日 / 趋势 / 我的) loads.
+`/health` returns JSON. Status `200` and `schemaReady: true` means Neon accepted a query and the locked relations are present. `/v1/read/today` returns JSON. `source` is `"db"` when the Shanghai day has `daily_aggregates` rows, and `"fixture"` when it does not. Open `https://<host>/` on a phone. The UI (概况 / 趋势 / 我的) loads.
 
 A free instance that has been asleep, or a Neon compute that has suspended, can fail the first request. Send it again once both are awake. If the first deploy's health check fails for that reason, wake the Neon compute from its console and redeploy.

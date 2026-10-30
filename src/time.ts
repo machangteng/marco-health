@@ -73,3 +73,8 @@ export function epochMillis(value: number): number | null {
   if (value > 1e9) return Math.trunc(value * 1000);
   return null;
 }
+
+/** Most recent complete Asia/Shanghai calendar day. */
+export function lastCompleteShanghaiDay(now: Date): string {
+  return shiftShanghaiDay(shanghaiDay(now), -1);
+}
