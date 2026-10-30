@@ -9,7 +9,7 @@ import { asQueryable } from "./query.js";
 import type { TodayResponse } from "./read/present.js";
 import { readToday, readTrends, type ReadQuery } from "./read/service.js";
 import { getSyncRun } from "./sync-run.js";
-import { isCalendarDay, shanghaiDay } from "./time.js";
+import { isCalendarDay, shanghaiDay, lastCompleteShanghaiDay } from "./time.js";
 import { contentTypeFor, resolveWebFile } from "./web-static.js";
 
 const MAX_BODY_BYTES = 2_000_000;
@@ -138,7 +138,7 @@ async function handleRead(
     return;
   }
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
-  const parsed = readParams(url);
+  const parsed = readParams(url, new Date(), path === "/v1/read/trends");
   if ("error" in parsed) {
     send(response, 400, parsed);
     return;
@@ -173,15 +173,17 @@ async function handleRead(
   send(response, 404, { error: "not_found" });
 }
 
-function readParams(url: URL): ReadQuery | { error: string; detail: string } {
+export function readParams(url: URL, now = new Date(), trends = false): ReadQuery | { error: string; detail: string } {
   const rawDay = url.searchParams.get("day");
-  const day = rawDay === null || rawDay === "" ? shanghaiDay(new Date()) : rawDay;
+  const defaultDay = rawDay === null || rawDay === "";
+  const day = defaultDay ? (trends ? shanghaiDay(now) : lastCompleteShanghaiDay(now)) : rawDay;
+  const sleepDay = defaultDay && !trends ? shanghaiDay(now) : day;
   if (!isCalendarDay(day)) return { error: "invalid_day", detail: "day must be YYYY-MM-DD." };
   const rawDevice = url.searchParams.get("device_id");
-  if (rawDevice === null || rawDevice === "") return { day, deviceId: null };
+  if (rawDevice === null || rawDevice === "") return { day, sleepDay, deviceId: null };
   const deviceId = rawDevice.toLowerCase();
   if (!isUuid(deviceId)) return { error: "invalid_device_id", detail: "device_id must be a UUID." };
-  return { day, deviceId };
+  return { day, sleepDay, deviceId };
 }
 
 function sliceHeart(today: TodayResponse) {
@@ -190,6 +192,7 @@ function sliceHeart(today: TodayResponse) {
     timezone: today.timezone,
     day: today.day,
     requested_day: today.requested_day,
+    is_complete_day: today.is_complete_day,
     heart_rate: today.heart_rate,
   };
 }
@@ -200,6 +203,7 @@ function sliceSleep(today: TodayResponse) {
     timezone: today.timezone,
     day: today.day,
     requested_day: today.requested_day,
+    is_complete_day: today.is_complete_day,
     sleep_score: today.sleep_score,
     sleep: today.sleep,
   };
@@ -211,6 +215,7 @@ function sliceWorkouts(today: TodayResponse) {
     timezone: today.timezone,
     day: today.day,
     requested_day: today.requested_day,
+    is_complete_day: today.is_complete_day,
     workouts: today.workouts,
   };
 }

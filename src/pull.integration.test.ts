@@ -97,6 +97,37 @@ describe("live pull ingest against postgres", { concurrency: 1 }, () => {
     }
   });
 
+  test("morning re-pull replaces a partial day with full-day values without duplicates", async () => {
+    const day = "2026-10-29";
+    const userId = "90009029";
+    const vendor = accountExternalId(userId);
+    try {
+      await pullShanghaiDay(db, {
+        day, userId, now: new Date("2026-10-29T06:30:00+08:00"),
+        steps: 500, activeKcal: 20, exerciseMinutes: 2, standHours: 1,
+      });
+      for (let repeat = 0; repeat < 2; repeat += 1) {
+        await pullShanghaiDay(db, {
+          day, userId, now: new Date("2026-10-30T06:30:00+08:00"),
+          steps: 12001, activeKcal: 418, exerciseMinutes: 36, standHours: 9,
+        });
+        const deviceId = await deviceIdFor(vendor);
+        const body = await readToday(day, deviceId);
+        assert.equal(body.steps, 12001);
+        assert.equal(body.active_kcal, 418);
+        assert.equal(body.exercise_minutes, 36);
+        assert.equal(body.stand_hours, 9);
+        const count = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM daily_aggregates WHERE device_id = $1::uuid AND day_local = $2::date",
+          [deviceId, day],
+        );
+        assert.equal(count.rows[0]?.count, "1");
+      }
+    } finally {
+      await deleteDevice(vendor);
+    }
+  });
+
   test("auth_expired does not replace daily_aggregates with fixture rows", async () => {
     const day = "2026-03-18";
     const userId = "90009018";

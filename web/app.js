@@ -78,6 +78,20 @@
     return theme === "light" ? "#ffffff" : "#000000";
   }
 
+  function shanghaiDay(now = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(now);
+    const part = (name) => parts.find((item) => item.type === name).value;
+    return part("year") + "-" + part("month") + "-" + part("day");
+  }
+
+  function overviewLabel(day, now = new Date()) {
+    const today = shanghaiDay(now);
+    const yesterday = shanghaiDay(new Date(new Date(today + "T00:00:00+08:00").getTime() - 86400000));
+    return (day === today ? "今天 " : day === yesterday ? "昨天 " : "") + day.slice(5).replace("-", "/");
+  }
+
   function formatDayLabel(day) {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day || "");
     if (!match) return day || "";
@@ -227,7 +241,7 @@
       d += (index === 0 ? "M" : "L") + point[0].toFixed(1) + " " + point[1].toFixed(1) + " ";
     });
     const area = d + " L " + points[points.length - 1][0].toFixed(1) + " " + h + " L " + points[0][0].toFixed(1) + " " + h + " Z";
-    svg.setAttribute("aria-label", "今日步数火花图");
+    svg.setAttribute("aria-label", "概况日步数火花图");
     svg.innerHTML =
       '<defs><linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">' +
       '<stop offset="0%" stop-color="#92e82a" stop-opacity="0.35"/>' +
@@ -736,6 +750,8 @@
   function hydrate() {
     const today = state.today;
     if (!today) return;
+    const heading = $("#tab-today h1");
+    if (heading) heading.textContent = overviewLabel(today.day);
     const eyebrow = $("#tab-today .eyebrow");
     if (eyebrow) eyebrow.textContent = formatDayLabel(today.day);
     text("move-value", formatMetric(today.rings.move.active_kcal));
@@ -799,8 +815,9 @@
   }
 
   async function loadAndPaint() {
-    state.today = await loadJson("/v1/read/today");
-    const day = encodeURIComponent(state.today.day);
+    const selectedDay = new URLSearchParams(location.search).get("day");
+    state.today = await loadJson("/v1/read/today" + (selectedDay ? "?day=" + encodeURIComponent(selectedDay) : ""));
+    const day = encodeURIComponent(shanghaiDay());
     const [week, month] = await Promise.all([
       loadJson("/v1/read/trends?range=week&day=" + day),
       loadJson("/v1/read/trends?range=month&day=" + day),
